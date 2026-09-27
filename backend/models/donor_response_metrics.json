@@ -1,0 +1,26 @@
+{
+  "synthetic_data": true,
+  "rows": 8000,
+  "train_rows": 6412,
+  "test_rows": 1588,
+  "train_through": "2025-06-28",
+  "test_from": "2025-06-29",
+  "date_overlap": false,
+  "acceptance_rate": 0.2731,
+  "accuracy": 0.7298,
+  "roc_auc": 0.6755,
+  "brier_score": 0.1838,
+  "seed": 2026,
+  "trained_at_utc": "2026-09-25T18:04:31.164417+00:00",
+  "features": [
+    "age",
+    "days_since_last_donation",
+    "donations_count",
+    "response_rate",
+    "notifications_30d",
+    "days_since_last_contact",
+    "month",
+    "is_festival_season"
+  ],
+  "warning": "Metrics measure recovery of a synthetic label-generating process, not real donor behavior."
+}
