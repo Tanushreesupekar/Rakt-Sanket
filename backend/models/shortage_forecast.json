@@ -1,0 +1,134 @@
+{
+  "blood_groups": {
+    "A+": {
+      "observations": 126,
+      "avg_daily_demand": 27.032,
+      "avg_issued": 11.19,
+      "avg_collected": 10.833,
+      "unmet_rate": 0.9365,
+      "closing_trend_per_day": -0.0358,
+      "seasonal_demand_factor_by_month": {
+        "1": 1.001,
+        "9": 0.976,
+        "10": 0.93,
+        "11": 1.044,
+        "12": 1.037
+      },
+      "festival_uplift_ratio": 0.971
+    },
+    "A-": {
+      "observations": 124,
+      "avg_daily_demand": 25.653,
+      "avg_issued": 11.96,
+      "avg_collected": 11.75,
+      "unmet_rate": 0.8306,
+      "closing_trend_per_day": -0.0055,
+      "seasonal_demand_factor_by_month": {
+        "1": 0.914,
+        "9": 1.13,
+        "10": 0.937,
+        "11": 0.973,
+        "12": 1.094
+      },
+      "festival_uplift_ratio": 0.856
+    },
+    "AB+": {
+      "observations": 125,
+      "avg_daily_demand": 24.512,
+      "avg_issued": 10.008,
+      "avg_collected": 9.776,
+      "unmet_rate": 0.912,
+      "closing_trend_per_day": -0.0129,
+      "seasonal_demand_factor_by_month": {
+        "1": 0.951,
+        "9": 0.866,
+        "10": 1.02,
+        "11": 0.991,
+        "12": 1.076
+      },
+      "festival_uplift_ratio": 0.978
+    },
+    "AB-": {
+      "observations": 122,
+      "avg_daily_demand": 26.902,
+      "avg_issued": 10.738,
+      "avg_collected": 10.451,
+      "unmet_rate": 0.9426,
+      "closing_trend_per_day": -0.009,
+      "seasonal_demand_factor_by_month": {
+        "1": 1.03,
+        "9": 0.966,
+        "10": 0.94,
+        "11": 0.993,
+        "12": 1.059
+      },
+      "festival_uplift_ratio": 0.947
+    },
+    "B+": {
+      "observations": 126,
+      "avg_daily_demand": 26.833,
+      "avg_issued": 10.865,
+      "avg_collected": 10.5,
+      "unmet_rate": 0.8889,
+      "closing_trend_per_day": -0.0217,
+      "seasonal_demand_factor_by_month": {
+        "1": 1.006,
+        "9": 1.018,
+        "10": 0.982,
+        "11": 0.875,
+        "12": 1.128
+      },
+      "festival_uplift_ratio": 0.867
+    },
+    "B-": {
+      "observations": 124,
+      "avg_daily_demand": 25.734,
+      "avg_issued": 10.339,
+      "avg_collected": 10.185,
+      "unmet_rate": 0.9355,
+      "closing_trend_per_day": 0.0042,
+      "seasonal_demand_factor_by_month": {
+        "1": 1.074,
+        "9": 0.929,
+        "10": 0.964,
+        "11": 0.97,
+        "12": 1.044
+      },
+      "festival_uplift_ratio": 0.982
+    },
+    "O+": {
+      "observations": 127,
+      "avg_daily_demand": 26.291,
+      "avg_issued": 11.071,
+      "avg_collected": 10.354,
+      "unmet_rate": 0.8898,
+      "closing_trend_per_day": 0.0059,
+      "seasonal_demand_factor_by_month": {
+        "1": 1.043,
+        "9": 1.095,
+        "10": 0.974,
+        "11": 1.075,
+        "12": 0.881
+      },
+      "festival_uplift_ratio": 1.086
+    },
+    "O-": {
+      "observations": 126,
+      "avg_daily_demand": 25.556,
+      "avg_issued": 11.429,
+      "avg_collected": 11.111,
+      "unmet_rate": 0.8492,
+      "closing_trend_per_day": -0.0002,
+      "seasonal_demand_factor_by_month": {
+        "1": 1.045,
+        "9": 1.014,
+        "10": 0.967,
+        "11": 1.068,
+        "12": 0.93
+      },
+      "festival_uplift_ratio": 1.072
+    }
+  },
+  "overall_avg_daily_demand": 26.064,
+  "warning": "Synthetic example-schema data; not real blood-bank records."
+}

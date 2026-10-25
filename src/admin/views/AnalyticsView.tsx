@@ -1,0 +1,10 @@
+import { BarChart3, Clock3, Gauge, Radio, Users } from 'lucide-react'
+import { Metric, RiskPill } from '../components/shared'
+import type { Campaign, Dashboard } from '../../lib/types'
+
+export function AdminAnalytics({ dashboard, campaigns }: { dashboard: Dashboard; campaigns: Campaign[] }) {
+  const stockCover = dashboard.inventory.reduce((sum, item) => sum + item.days_of_supply, 0) / Math.max(1, dashboard.inventory.length)
+  const averageCbsri = dashboard.inventory.reduce((sum, item) => sum + item.cbsri, 0) / Math.max(1, dashboard.inventory.length)
+  const sorted = dashboard.inventory.slice().sort((a, b) => b.cbsri - a.cbsri)
+  return <div className="analytics-view"><section className="metric-grid"><Metric label="Average days of cover" value={stockCover.toFixed(1)} note="Across tracked blood groups" icon={Clock3} tone="green" /><Metric label="Mean CBSRI" value={averageCbsri.toFixed(1)} note="Composite risk response index" icon={Gauge} tone="ink" /><Metric label="Donor coverage" value={`${dashboard.totals.eligible_donors}/${dashboard.totals.donor_count}`} note="Currently eligible in district" icon={Users} tone="blue" /><Metric label="Campaign rounds" value={String(campaigns.length)} note="Recorded simulated outreach" icon={Radio} tone="gold" /></section><section className="panel analytics-table"><div className="panel-heading"><div><div className="eyebrow">BLOOD GROUP COMPARISON</div><h2>District performance signals</h2></div><BarChart3 size={19} className="donor-panel-icon" /></div><div className="analytics-bars">{sorted.map((item) => <div className="analytics-bar-row" key={item.id}><span className="blood-type">{item.blood_group}</span><span className="analytics-bar-track"><i style={{ width: `${item.cbsri}%` }} /></span><strong>{item.cbsri.toFixed(1)}</strong><RiskPill level={item.risk_level} /><span className="analytics-units">{item.units_available} units · {item.days_of_supply.toFixed(1)} days</span></div>)}</div><p className="request-disclaimer">Signals use synthetic demo stock data and the current pilot scoring weights.</p></section></div>
+}

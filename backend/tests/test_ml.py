@@ -1,3 +1,4 @@
+import isolated_env  # noqa: F401  (must precede app imports)
 import unittest
 
 import pandas as pd
@@ -32,6 +33,26 @@ class DonorResponseModelTests(unittest.TestCase):
         self.assertGreaterEqual(probability, 0)
         self.assertLessEqual(probability, 1)
         self.assertIn("Model factors:", explanation)
+
+
+class BatchRankingTests(unittest.TestCase):
+    def test_batched_ranking_matches_ranking_each_donor_alone(self) -> None:
+        from datetime import date, datetime, timedelta, timezone
+
+        from app.models import Donor
+        from app.services.ranking import rank_donor, rank_donors
+
+        today = date.today()
+        donors = [
+            Donor(id=index + 1, name=f"Donor {index}", district="Amravati", blood_group="O+",
+                  age=19 + index * 3, donations_count=index % 9, response_rate=round(0.1 + index * 0.06, 2),
+                  notifications_30d=index % 5, available=index % 7 != 0,
+                  last_donation_date=None if index == 3 else today - timedelta(days=30 + index * 23),
+                  last_contact_at=None if index % 3 == 0 else datetime.now(timezone.utc) - timedelta(days=index * 4))
+            for index in range(14)
+        ]
+        self.assertEqual(rank_donors(donors), [rank_donor(donor) for donor in donors])
+        self.assertEqual(rank_donors([]), [])
 
 
 if __name__ == "__main__":

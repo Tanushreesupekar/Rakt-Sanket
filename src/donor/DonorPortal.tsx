@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Bell, CalendarDays, Check, Droplet, HeartPulse, History, MapPin, Send, ShieldCheck, UserRound, Users } from 'lucide-react'
-import { api } from './api'
-import type { BloodRequest, Donor, DonorHistory, DonorNotification } from './types'
+import { api } from '../lib/api'
+import type { BloodRequest, Donor, DonorHistory, DonorNotification } from '../lib/types'
 
 type DonorSection = 'profile' | 'requests' | 'notifications' | 'history'
 const sections: { id: DonorSection; label: string; icon: typeof UserRound }[] = [

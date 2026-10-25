@@ -1,17 +1,18 @@
 {
   "synthetic_data": true,
-  "rows": 8000,
-  "train_rows": 6412,
-  "test_rows": 1588,
-  "train_through": "2025-06-28",
-  "test_from": "2025-06-29",
+  "data_source": "linked reference tables (donors_full + notifications_full, example-schema synthetic)",
+  "rows": 3905,
+  "train_rows": 1121,
+  "test_rows": 2784,
+  "train_through": "2026-06-26",
+  "test_from": "2026-06-27",
   "date_overlap": false,
-  "acceptance_rate": 0.2731,
-  "accuracy": 0.7298,
-  "roc_auc": 0.6755,
-  "brier_score": 0.1838,
+  "acceptance_rate": 0.5439,
+  "accuracy": 0.5467,
+  "roc_auc": 0.5373,
+  "brier_score": 0.262,
   "seed": 2026,
-  "trained_at_utc": "2026-09-25T18:04:31.164417+00:00",
+  "trained_at_utc": "2026-10-13T22:25:00.783481+00:00",
   "features": [
     "age",
     "days_since_last_donation",
@@ -20,7 +21,10 @@
     "notifications_30d",
     "days_since_last_contact",
     "month",
-    "is_festival_season"
+    "is_festival_season",
+    "previous_requests",
+    "previous_responses",
+    "is_urgent"
   ],
-  "warning": "Metrics measure recovery of a synthetic label-generating process, not real donor behavior."
+  "warning": "Metrics measure recovery of synthetic example-schema outcomes, not real donor behavior."
 }

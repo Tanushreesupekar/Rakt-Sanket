@@ -1,3 +1,4 @@
+import isolated_env  # noqa: F401  (must precede app imports)
 import unittest
 
 from app.services.scoring import CBSRIWeights, compute_cbsri, donor_priority, fatigue_multiplier, risk_label
