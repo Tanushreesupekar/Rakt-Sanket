@@ -1,9 +1,7 @@
 from collections.abc import Sequence
 from datetime import date, datetime, timezone
 
-import pandas as pd
-
-from app.ml.donor_response import FEATURES, feature_row, predict_responses
+from app.ml.donor_response import feature_row, predict_responses
 from app.models import Donor
 from app.services.scoring import donor_priority
 
@@ -39,7 +37,7 @@ def rank_donors(donors: Sequence[Donor]) -> list[dict]:
             days_since_last_contact=days_since_contact,
             reference_date=today,
         ))
-    predictions = predict_responses(pd.DataFrame(rows, columns=FEATURES))
+    predictions = predict_responses(rows)
     return [
         _ranking(donor, days_since_donation, days_since_contact, None if predictions is None else predictions[index])
         for index, (donor, (days_since_donation, days_since_contact)) in enumerate(zip(donors, timing))

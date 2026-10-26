@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import date
 from functools import lru_cache
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-import pandas as pd
-from xgboost import DMatrix, XGBClassifier
+import numpy as np
+from xgboost import Booster, DMatrix
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+# The served API deliberately avoids pandas and scikit-learn: a Vercel Python
+# function must stay under 500 MB installed, and both are needed only for
+# training (requirements-dev.txt). Inference uses a NumPy matrix and the raw
+# XGBoost Booster, which gives the same probabilities as XGBClassifier for
+# this binary:logistic model saved without early stopping.
 
 
 FEATURES = (
@@ -28,6 +39,9 @@ METADATA_PATH = MODEL_DIR / "donor_response_metrics.json"
 
 
 def build_features(**kwargs) -> pd.DataFrame:
+    """One feature row as a DataFrame, for training code and tests."""
+    import pandas as pd
+
     return pd.DataFrame([feature_row(**kwargs)], columns=FEATURES)
 
 
@@ -69,42 +83,48 @@ def feature_row(
 
 
 @lru_cache(maxsize=1)
-def load_model() -> XGBClassifier | None:
+def load_model() -> Booster | None:
     if not MODEL_PATH.exists():
         return None
-    model = XGBClassifier()
-    model.load_model(MODEL_PATH)
-    return model
+    return Booster(model_file=str(MODEL_PATH))
+
+
+Rows = Sequence[Mapping[str, Any]]
+
+
+def _as_rows(features: Rows | pd.DataFrame) -> list[Mapping[str, Any]]:
+    to_dict = getattr(features, "to_dict", None)
+    return to_dict("records") if callable(to_dict) else list(features)
 
 
 def predict_response(
-    features: pd.DataFrame,
+    features: Rows | pd.DataFrame,
 ) -> tuple[float, str] | None:
     predictions = predict_responses(features)
     return None if predictions is None else predictions[0]
 
 
 def predict_responses(
-    features: pd.DataFrame,
+    features: Rows | pd.DataFrame,
 ) -> list[tuple[float, str]] | None:
     """Score every row of `features` with one model call and one TreeSHAP
     call. Per-row calls cost ~8 ms each, which made ranking a district with
     1,000 donors take seconds; batching keeps it to a few milliseconds."""
-    model = load_model()
-    if model is None:
+    booster = load_model()
+    if booster is None:
         return None
-    if features.empty:
+    rows = _as_rows(features)
+    if not rows:
         return []
 
-    booster_names = model.get_booster().feature_names
-    expected = list(booster_names) if booster_names else list(FEATURES)
-    frame = features.loc[:, [c for c in expected if c in features.columns]]
-    probabilities = model.predict_proba(frame)[:, 1]
-    contributions = model.get_booster().predict(
-        DMatrix(frame, feature_names=expected), pred_contribs=True
-    )[:, :-1]
+    expected = list(booster.feature_names) if booster.feature_names else list(FEATURES)
+    matrix = DMatrix(
+        np.array([[float(row[name]) for name in expected] for row in rows], dtype=np.float32),
+        feature_names=expected,
+    )
+    probabilities = booster.predict(matrix)
+    contributions = booster.predict(matrix, pred_contribs=True)[:, :-1]
     names = expected[: contributions.shape[1]]
-    rows = features.to_dict("records")
     results = []
     for row, probability in enumerate(probabilities):
         strongest = sorted(zip(names, contributions[row]), key=lambda pair: abs(float(pair[1])), reverse=True)[:2]
