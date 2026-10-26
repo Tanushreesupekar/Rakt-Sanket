@@ -1,7 +1,9 @@
 # Local development, tests, dataset generation and model training.
-# scikit-learn and openpyxl are used only by app/ml/train.py,
-# reference_dataset.py and reference_training.py, never by the served API.
+# pandas, scikit-learn and openpyxl are used only by app/ml/train.py,
+# dataset.py, reference_dataset.py and reference_training.py (and tests),
+# never by the served API.
 -r requirements.txt
+pandas>=2.2,<4.0
 scikit-learn>=1.5,<2.0
 openpyxl>=3.1,<4.0
 # the test client (starlette.testclient) needs it on current Starlette

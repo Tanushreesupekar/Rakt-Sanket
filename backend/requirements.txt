@@ -1,6 +1,7 @@
 # What the running API imports. Vercel and the Docker image install exactly
 # this file, and a Vercel Python function must stay under 500 MB installed,
-# so training-only packages live in requirements-dev.txt instead.
+# so training-only packages (pandas, scikit-learn, openpyxl) live in
+# requirements-dev.txt instead.
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
 sqlalchemy>=2.0,<3.0
@@ -8,8 +9,10 @@ pydantic>=2.7,<3.0
 python-dotenv>=1.0,<2.0
 psycopg[binary]>=3.2,<4.0
 numpy>=1.26,<3.0
-pandas>=2.2,<4.0
-xgboost>=2.1,<4.0
+# On Linux the regular xgboost wheel depends on nvidia-nccl (~200 MB, GPU-only).
+# xgboost-cpu is the same `import xgboost` and model format without it.
+xgboost-cpu>=2.1,<4.0; sys_platform == "linux"
+xgboost>=2.1,<4.0; sys_platform != "linux"
 alembic>=1.14,<2.0
 PyJWT>=2.10,<3.0
 pwdlib[argon2]>=0.2,<1.0
