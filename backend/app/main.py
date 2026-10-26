@@ -1,13 +1,13 @@
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
 
-from app.auth import authorize_donor_access, create_access_token, get_current_user, hash_password, require_admin, verify_password
+from app.auth import authorize_donor_access, create_access_token, get_current_user, hash_password, login_throttle, require_admin, verify_login
 from app.database import SessionLocal, engine, get_db
 from app.ml.donor_response import model_status
 from app.models import BloodRequest, Campaign, Donor, Inventory, Notification, User
@@ -15,8 +15,8 @@ from app.schemas import AdvisoryOut, AuthUserOut, BloodRequestCreate, BloodReque
 from app.seed import seed_demo_data
 from app.settings import ACCESS_TOKEN_MINUTES, ALLOWED_HOSTS, API_DOCS_ENABLED, APP_ENV, DEMO_SEED, FRONTEND_ORIGINS, IS_PRODUCTION
 from app.services.forecasting import build_forecast, shortage_score
-from app.services.ranking import rank_donor
-from app.services.scoring import CBSRIWeights, compute_cbsri, risk_label
+from app.services.ranking import rank_donors
+from app.services.scoring import active_weights, compute_cbsri, risk_label
 
 
 @asynccontextmanager
@@ -90,11 +90,17 @@ def model_health(_: User | None = Depends(require_admin)):
 
 
 @app.post("/api/auth/login", response_model=LoginOut)
-def login(payload: LoginRequest, session: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request, session: Session = Depends(get_db)):
     email = payload.email.strip().casefold()
+    client = request.client.host if request.client else "unknown"
+    wait = login_throttle.retry_after(email, client)
+    if wait:
+        raise HTTPException(status_code=429, detail="Too many failed sign-in attempts. Try again later.", headers={"Retry-After": str(wait)})
     user = session.scalar(select(User).where(User.email == email, User.is_active.is_(True)))
-    if user is None or not verify_password(payload.password, user.password_hash):
+    if not verify_login(user, payload.password):
+        login_throttle.record_failure(email, client)
         raise HTTPException(status_code=401, detail="Email or password is incorrect")
+    login_throttle.record_success(email)
     return {
         "access_token": create_access_token(user),
         "expires_in": ACCESS_TOKEN_MINUTES * 60,
@@ -130,18 +136,50 @@ def create_donor_account(
     return user
 
 
-def calculate_group_scores(session: Session, inventory: Inventory, horizon_days: int = 14) -> dict:
-    donors = session.scalars(select(Donor).where(
-        Donor.district == inventory.district,
-        Donor.blood_group == inventory.blood_group,
-    )).all()
-    ranked = [rank_donor(donor) for donor in donors]
+# Donor rankings run the XGBoost model, so endpoints rank each donor once per
+# request (rank_donors batches the model call) and pass the results down.
+GroupRankings = dict[tuple[str, str], list[dict]]
+
+
+def rank_by_id(donors) -> dict[int, dict]:
+    return {donor.id: ranking for donor, ranking in zip(donors, rank_donors(donors))}
+
+
+def rankings_by_group(donors, ranked: dict[int, dict]) -> GroupRankings:
+    groups: GroupRankings = {}
+    for donor in donors:
+        groups.setdefault((donor.district, donor.blood_group), []).append(ranked[donor.id])
+    return groups
+
+
+def group_rankings_for(session: Session, items) -> GroupRankings:
+    """Rank every donor relevant to `items` with one batched model call."""
+    districts = {item.district for item in items}
+    if not districts:
+        return {}
+    donors = session.scalars(select(Donor).where(Donor.district.in_(districts))).all()
+    groups = rankings_by_group(donors, rank_by_id(donors))
+    for item in items:
+        groups.setdefault((item.district, item.blood_group), [])
+    return groups
+
+
+def calculate_group_scores(session: Session, inventory: Inventory, horizon_days: int = 14, rankings: GroupRankings | None = None) -> dict:
+    key = (inventory.district, inventory.blood_group)
+    if rankings is not None and key in rankings:
+        ranked = rankings[key]
+    else:
+        donors = session.scalars(select(Donor).where(
+            Donor.district == inventory.district,
+            Donor.blood_group == inventory.blood_group,
+        )).all()
+        ranked = rank_donors(donors)
     eligible = [entry for entry in ranked if entry["eligible"]]
     strongest = sorted(eligible, key=lambda entry: entry["priority_score"], reverse=True)[:5]
     response_score = round(sum(entry["response_probability"] for entry in strongest) / len(strongest) * 100, 1) if strongest else 0.0
     priority_score = round(sum(entry["priority_score"] for entry in strongest) / len(strongest), 1) if strongest else 0.0
     forecast_score = shortage_score(inventory, horizon_days)
-    cbsri = compute_cbsri(forecast_score, response_score, priority_score, CBSRIWeights())
+    cbsri = compute_cbsri(forecast_score, response_score, priority_score, active_weights())
     return {
         "shortage_score": forecast_score,
         "response_score": response_score,
@@ -152,8 +190,8 @@ def calculate_group_scores(session: Session, inventory: Inventory, horizon_days:
     }
 
 
-def inventory_out(session: Session, item: Inventory) -> dict:
-    scores = calculate_group_scores(session, item)
+def inventory_out(session: Session, item: Inventory, scores: dict | None = None) -> dict:
+    scores = scores or calculate_group_scores(session, item)
     return {
         "id": item.id,
         "district": item.district,
@@ -170,8 +208,8 @@ def inventory_out(session: Session, item: Inventory) -> dict:
     }
 
 
-def donor_out(donor: Donor) -> dict:
-    ranking = rank_donor(donor)
+def donor_out(donor: Donor, ranking: dict | None = None) -> dict:
+    ranking = ranking or rank_donors([donor])[0]
     return {
         "id": donor.id,
         "name": donor.name,
@@ -191,8 +229,8 @@ def donor_out(donor: Donor) -> dict:
     }
 
 
-def build_forecast_out(session: Session, item: Inventory, days: int) -> dict:
-    scores = calculate_group_scores(session, item, days)
+def build_forecast_out(session: Session, item: Inventory, days: int, scores: dict | None = None) -> dict:
+    scores = scores or calculate_group_scores(session, item, days)
     points = build_forecast(item, days)
     final_units = points[-1]["projected_units"]
     explanation = (
@@ -227,10 +265,14 @@ def dashboard(district: str | None = None, _: User | None = Depends(require_admi
     selected_district = district.strip() if district and district.strip() else default_district
     query = select(Inventory).where(Inventory.district == selected_district) if selected_district else select(Inventory)
     items = session.scalars(query.order_by(Inventory.blood_group)).all()
-    stocks = [inventory_out(session, item) for item in items]
     donor_query = select(Donor).where(Donor.district == selected_district) if selected_district else select(Donor)
     donors = session.scalars(donor_query).all()
-    donor_cards = sorted((donor_out(donor) for donor in donors), key=lambda entry: entry["priority_score"], reverse=True)
+    ranked = rank_by_id(donors)
+    groups = rankings_by_group(donors, ranked)
+    # inventory cards and forecasts share the 14-day horizon, so score once
+    scores = {item.id: calculate_group_scores(session, item, 14, groups) for item in items}
+    stocks = [inventory_out(session, item, scores[item.id]) for item in items]
+    donor_cards = sorted((donor_out(donor, ranked[donor.id]) for donor in donors), key=lambda entry: entry["priority_score"], reverse=True)
     campaigns = session.scalars(select(Campaign).order_by(Campaign.created_at.desc()).limit(5)).all()
     return {
         "generated_at": datetime.now(timezone.utc),
@@ -244,7 +286,7 @@ def dashboard(district: str | None = None, _: User | None = Depends(require_admi
             "critical_groups": sum(1 for item in stocks if item["risk_level"] == "critical"),
         },
         "inventory": stocks,
-        "forecasts": [build_forecast_out(session, item, 14) for item in items],
+        "forecasts": [build_forecast_out(session, item, 14, scores[item.id]) for item in items],
         "top_donors": [donor for donor in donor_cards if donor["eligible"]][:8],
         "recent_campaigns": [campaign_out(session, item) for item in campaigns],
     }
@@ -266,7 +308,8 @@ def forecasts(
     items = session.scalars(query.order_by(Inventory.district, Inventory.blood_group)).all()
     if not items:
         raise HTTPException(status_code=404, detail="No inventory found for the selected district and blood group")
-    return [build_forecast_out(session, item, days) for item in items]
+    groups = group_rankings_for(session, items)
+    return [build_forecast_out(session, item, days, calculate_group_scores(session, item, days, groups)) for item in items]
 
 
 @app.get("/api/inventory", response_model=list[InventoryOut])
@@ -275,7 +318,8 @@ def inventory(district: str | None = None, _: User | None = Depends(require_admi
     if district:
         query = query.where(Inventory.district == district)
     items = session.scalars(query.order_by(Inventory.district, Inventory.blood_group)).all()
-    return [inventory_out(session, item) for item in items]
+    groups = group_rankings_for(session, items)
+    return [inventory_out(session, item, calculate_group_scores(session, item, rankings=groups)) for item in items]
 
 
 @app.patch("/api/inventory/{inventory_id}")
@@ -305,7 +349,8 @@ def donors(
         query = query.where(Donor.district == district)
     if blood_group:
         query = query.where(Donor.blood_group == blood_group)
-    entries = [donor_out(donor) for donor in session.scalars(query.order_by(Donor.id)).all()]
+    found = session.scalars(query.order_by(Donor.id)).all()
+    entries = [donor_out(donor, ranking) for donor, ranking in zip(found, rank_donors(found))]
     if eligible_only:
         entries = [entry for entry in entries if entry["eligible"]]
     entries.sort(key=lambda entry: entry["priority_score"], reverse=True)
@@ -447,11 +492,12 @@ def create_campaign(payload: CampaignCreate, _: User | None = Depends(require_ad
         Donor.district == payload.district,
         Donor.blood_group == payload.blood_group,
     )).all()
-    eligible = [donor for donor in candidates if rank_donor(donor)["eligible"]]
-    eligible.sort(key=lambda donor: rank_donor(donor)["priority_score"], reverse=True)
+    ranked = rank_by_id(candidates)
+    eligible = [donor for donor in candidates if ranked[donor.id]["eligible"]]
+    eligible.sort(key=lambda donor: ranked[donor.id]["priority_score"], reverse=True)
     start = (payload.stage - 1) * payload.batch_size
     selected = eligible[start:start + payload.batch_size]
-    scores = calculate_group_scores(session, inventory_item)
+    scores = calculate_group_scores(session, inventory_item, rankings=rankings_by_group(candidates, ranked))
     campaign = Campaign(
         district=payload.district,
         blood_group=payload.blood_group,
@@ -500,6 +546,7 @@ def advisory(district: str | None = None, language: str = "en", _: User | None =
     items = session.scalars(query).all()
     if not items:
         raise HTTPException(status_code=404, detail="No inventory found for the selected district")
-    highest = max((inventory_out(session, item) for item in items), key=lambda item: item["cbsri"])
+    groups = group_rankings_for(session, items)
+    highest = max((inventory_out(session, item, calculate_group_scores(session, item, rankings=groups)) for item in items), key=lambda item: item["cbsri"])
     title, message, action = ADVISORIES[language][highest["risk_level"]]
     return {"language": language, "title": title, "message": message, "action": action, "cbsri": highest["cbsri"]}

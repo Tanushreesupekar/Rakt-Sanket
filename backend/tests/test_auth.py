@@ -1,3 +1,4 @@
+import isolated_env  # noqa: F401  (must precede app imports)
 import unittest
 
 from fastapi.testclient import TestClient
@@ -84,6 +85,33 @@ class ProductionAuthTests(unittest.TestCase):
                 "password": "new-donor-password-123",
             })
             self.assertEqual(new_login.status_code, 200)
+
+    def setUp(self) -> None:
+        auth.login_throttle.reset()
+
+    def test_repeated_failed_logins_are_throttled_per_account(self) -> None:
+        with TestClient(app) as client:
+            wrong = {"email": "admin@example.com", "password": "definitely-wrong-123"}
+            for _ in range(auth.login_throttle.max_per_account):
+                self.assertEqual(client.post("/api/auth/login", json=wrong).status_code, 401)
+            blocked = client.post("/api/auth/login", json=wrong)
+            self.assertEqual(blocked.status_code, 429)
+            self.assertGreater(int(blocked.headers["Retry-After"]), 0)
+            # the correct password is refused too while the account is locked
+            locked = client.post("/api/auth/login", json={"email": "admin@example.com", "password": "admin-test-password-123"})
+            self.assertEqual(locked.status_code, 429)
+            # other accounts are unaffected
+            other = client.post("/api/auth/login", json={"email": "donor@example.com", "password": "donor-test-password-123"})
+            self.assertEqual(other.status_code, 200)
+
+    def test_successful_login_clears_account_failures(self) -> None:
+        with TestClient(app) as client:
+            for _ in range(auth.login_throttle.max_per_account - 1):
+                client.post("/api/auth/login", json={"email": "admin@example.com", "password": "definitely-wrong-123"})
+            ok = client.post("/api/auth/login", json={"email": "admin@example.com", "password": "admin-test-password-123"})
+            self.assertEqual(ok.status_code, 200)
+            again = client.post("/api/auth/login", json={"email": "admin@example.com", "password": "definitely-wrong-123"})
+            self.assertEqual(again.status_code, 401)
 
     def test_login_does_not_disclose_which_credential_failed(self) -> None:
         with TestClient(app) as client:

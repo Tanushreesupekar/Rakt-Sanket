@@ -1,3 +1,4 @@
+import isolated_env  # noqa: F401  (must precede app imports)
 import unittest
 
 from fastapi.testclient import TestClient

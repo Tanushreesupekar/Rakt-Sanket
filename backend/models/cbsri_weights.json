@@ -1,0 +1,14 @@
+{
+  "weights": {
+    "shortage": 0.7283,
+    "response": 0.171,
+    "fatigue_adjusted_priority": 0.1007
+  },
+  "correlations": {
+    "shortage_demand_pressure_vs_shortage_event": 0.7555,
+    "prior_response_rate_vs_responded": 0.1774,
+    "fatigue_discounted_rate_vs_responded": 0.1044
+  },
+  "method": "Weights proportional to |correlation| with historical shortage/response events in the linked reference tables.",
+  "warning": "Synthetic example-schema data; weights are pilot defaults, not clinical evidence."
+}

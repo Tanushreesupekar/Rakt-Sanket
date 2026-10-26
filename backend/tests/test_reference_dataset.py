@@ -1,3 +1,4 @@
+import isolated_env  # noqa: F401  (must precede app imports)
 import tempfile
 import unittest
 from pathlib import Path

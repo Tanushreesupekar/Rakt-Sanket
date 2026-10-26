@@ -25,6 +25,10 @@ ALLOWED_HOSTS = tuple(
     for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,testserver" if not IS_PRODUCTION else "").split(",")
     if host.strip()
 )
+if not IS_PRODUCTION and "testserver" not in ALLOWED_HOSTS:
+    # Starlette TestClient sends host "testserver"; a local .env that
+    # overrides ALLOWED_HOSTS must not break the test suite.
+    ALLOWED_HOSTS = (*ALLOWED_HOSTS, "testserver")
 if IS_PRODUCTION and (not ALLOWED_HOSTS or "*" in ALLOWED_HOSTS):
     raise RuntimeError("Production ALLOWED_HOSTS must be explicitly configured")
 

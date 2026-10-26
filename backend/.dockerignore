@@ -1,0 +1,12 @@
+# Secrets and local databases must never end up in the image.
+.env
+.env.*
+!.env.example
+!.env.production.example
+*.db
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+tests/
+data/*.xlsx

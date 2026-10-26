@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+import json
+from pathlib import Path
+
+
+CALIBRATED_WEIGHTS_PATH = Path(__file__).resolve().parents[2] / "models" / "cbsri_weights.json"
 
 
 @dataclass(frozen=True)
@@ -58,3 +64,32 @@ def risk_label(score: float) -> str:
     if score >= 45:
         return "elevated"
     return "stable"
+
+
+@lru_cache(maxsize=1)
+def load_calibrated_weights() -> CBSRIWeights | None:
+    """Return correlation-calibrated CBSRI weights, or None when unavailable.
+
+    Calibration artifact: models/cbsri_weights.json, produced by
+    app.ml.reference_training.calibrate_cbsri_weights from the linked
+    reference tables. Weights are proportional to |correlation| of each
+    component with historical shortage/response events. Pilot defaults
+    (0.45/0.30/0.25) apply when the file is missing or invalid.
+    """
+    if not CALIBRATED_WEIGHTS_PATH.exists():
+        return None
+    try:
+        payload = json.loads(CALIBRATED_WEIGHTS_PATH.read_text(encoding="utf-8"))
+        weights = payload.get("weights", {})
+        return CBSRIWeights(
+            shortage=float(weights["shortage"]),
+            response=float(weights["response"]),
+            fatigue_adjusted_priority=float(weights["fatigue_adjusted_priority"]),
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def active_weights() -> CBSRIWeights:
+    """Calibrated weights when present, else transparent pilot defaults."""
+    return load_calibrated_weights() or CBSRIWeights()

@@ -37,14 +37,32 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
   if (!response.ok) {
-    const body = await response.json().catch(() => null) as { detail?: string } | null
-    if (response.status === 401 && import.meta.env.VITE_AUTH_REQUIRED === 'true') {
+    const body = await response.json().catch(() => null) as { detail?: unknown } | null
+    // a 401 on the sign-in request itself is a wrong password, not an expired session
+    if (response.status === 401 && import.meta.env.VITE_AUTH_REQUIRED === 'true' && path !== '/auth/login') {
       clearSession()
       window.location.assign('/')
     }
-    throw new Error(body?.detail ?? `Request failed (${response.status})`)
+    throw new Error(errorMessage(body?.detail, response.status))
   }
   return response.json() as Promise<T>
+}
+
+type ValidationIssue = { loc?: (string | number)[]; msg?: string }
+
+// FastAPI sends `detail` as a string for HTTPException and as a list of
+// issues for request-validation (422) errors.
+function errorMessage(detail: unknown, status: number): string {
+  if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail) && detail.length) {
+    return (detail as ValidationIssue[]).map((issue) => {
+      const field = issue.loc?.filter((part) => part !== 'body').join('.')
+      const message = (issue.msg ?? 'is invalid').replace(/^Value error, /, '')
+      return field ? `${field.replace(/_/g, ' ')}: ${message}` : message
+    }).join('; ')
+  }
+  if (status === 429) return 'Too many attempts. Please wait a few minutes and try again.'
+  return `Request failed (${status})`
 }
 
 export const api = {

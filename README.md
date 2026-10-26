@@ -7,7 +7,7 @@ A pilot dashboard for district-level blood availability, donor response prioriti
 - React, TypeScript, and Vite dashboard with separate admin and donor workspaces. Admin views cover inventory, demand forecasts, donor management, CBSRI ranking, notifications, and analytics; donor views cover profile, blood requests, notifications, and donation history.
 - FastAPI service for district inventory, 7–14 day projections, donor eligibility and fatigue-adjusted priority, advisory translations, and campaign simulation.
 - SQLAlchemy persistence with SQLite for local demos and PostgreSQL for staging/production; Alembic owns deployed schema changes.
-- Argon2 password hashing, short-lived signed bearer tokens, admin/donor role enforcement, donor-record ownership checks, and interactive first-admin provisioning.
+- Argon2 password hashing, short-lived signed bearer tokens, admin/donor role enforcement, donor-record ownership checks, failed-login throttling, and interactive first-admin provisioning.
 - Synthetic demo records for Amravati, Akola, Wardha, and Yavatmal. Demo names are marked and do not represent real donors.
 - A reproducible synthetic donor-response dataset and trained XGBoost model with TreeSHAP feature attributions.
 - API, scoring, dataset-generation, and model-inference tests.
@@ -70,6 +70,22 @@ To load the PDF-derived synthetic records into a database after migration, run `
 
 `GET /api/health` is a liveness check; `GET /api/ready` checks database connectivity. Point the platform readiness probe at `/api/ready`. A real provider connection is not established in this workspace because the database URL, account secret, and deployment host are not available here.
 
+### Container image
+
+`backend/Dockerfile` builds the API image (non-root user, health check on `/api/ready`, no `.env` or database copied in):
+
+```powershell
+docker build -t raktsanket-api backend
+docker run --rm --env-file <secrets-file> raktsanket-api python -m alembic upgrade head
+docker run -p 8000:8000 --env-file <secrets-file> raktsanket-api
+```
+
+`WEB_CONCURRENCY` sets the uvicorn worker count; set `FORWARDED_ALLOW_IPS` to your load balancer's address so client IPs from `X-Forwarded-For` are trusted only from it.
+
+### Sign-in protection
+
+`POST /api/auth/login` returns `429` with `Retry-After` after 5 failed attempts for one account, or 30 from one client address, within 15 minutes. A successful sign-in clears that account's failures. The counters live in each API process; with several workers or replicas, also rate-limit `/api/auth/login` at the proxy or gateway.
+
 ## API surface
 
 - `GET /api/health` — service status.
@@ -92,6 +108,8 @@ Set-Location ..
 npm run build
 ```
 
+The tests pin their own environment (`backend/tests/isolated_env.py`: development mode, in-memory SQLite), so they never read `backend/.env` or touch a configured database.
+
 ## Donor response AI
 
 The generated training data is at `backend/data/donor_response_synthetic.csv` (8,000 rows, fixed seed `2026`); the Excel workbook version is `backend/data/donor_response_synthetic.xlsx` and includes a data dictionary and dataset notes. Each row represents an invitation and contains non-identifying historical features plus `accepted_invitation`, a simulated outcome. It is generated with a known, documented-in-code probability process and must not be treated as observed donor behavior.
@@ -102,7 +120,7 @@ The trained artifact and holdout metrics are at `backend/models/donor_response_x
 python -m app.ml.train --regenerate --rows 8000 --seed 2026
 ```
 
-The trainer sorts by invitation date and reserves later dates for the test partition. Current synthetic holdout metrics are ROC AUC `0.6755`, accuracy `0.7298`, and Brier score `0.1838`; the metadata records the exact date boundary. These describe recovery of the synthetic label process only and are not estimates of real-world donor response. The API uses the trained model when the artifact is present, applies contact-fatigue adjustment separately, and returns the top model factors using XGBoost TreeSHAP contributions. If the model file is absent, donor ranking falls back to the documented heuristic.
+The trainer sorts by invitation date and reserves later dates for the test partition. The model currently shipped in `backend/models/` was retrained on the linked reference tables (3,905 notification rows, test from 2026-06-27). Its holdout metrics are ROC AUC `0.5373`, accuracy `0.5467`, and Brier score `0.2620`, against a 0.5439 acceptance base rate, so it barely beats always predicting "accepts". The earlier model trained on `donor_response_synthetic.csv` reached ROC AUC `0.6755`. `backend/models/donor_response_metrics.json` records the exact date boundary and is the source of truth for these numbers. These describe recovery of the synthetic label process only and are not estimates of real-world donor response. The API uses the trained model when the artifact is present, applies contact-fatigue adjustment separately, and returns the top model factors using XGBoost TreeSHAP contributions. If the model file is absent, donor ranking falls back to the documented heuristic.
 
 ## Full example-schema dataset
 
@@ -118,8 +136,6 @@ All added rows are synthetic demonstrations, not verified bank, donor, or contac
 
 ## Model and data boundaries
 
-This repository is a production-configurable pilot foundation, not a clinically validated system. It includes a trained XGBoost donor-response classifier, but its training labels are synthetic. The active shortage forecast is still a transparent weekday-adjusted demand projection because no historical stock series was supplied. CBSRI uses explicit, configurable default weights (0.45 shortage, 0.30 response, 0.25 fatigue-adjusted priority), normalized at runtime; these weights are not statistically derived.
+This repository is a production-configurable pilot foundation, not a clinically validated system. It includes a trained XGBoost donor-response classifier, but its training labels are synthetic. The shortage forecast is a transparent weekday-adjusted demand projection; when `backend/models/shortage_forecast.json` is present it adds seasonal factors and collection coverage derived from the synthetic reference stock history. CBSRI weights come from `backend/models/cbsri_weights.json` (correlation-calibrated on the synthetic reference tables) when present, otherwise the documented defaults (0.45 shortage, 0.30 response, 0.25 fatigue-adjusted priority); either way they are normalized at runtime and are not derived from real observations.
 
 Before medical operations, replace synthetic donor training labels and demo seed records with approved, de-identified observations; calibrate and back-test forecasts against documented shortage periods and a moving-average baseline; retrain and evaluate the donor model on a date-separated real dataset; and derive CBSRI weights from the historical event set. Authentication and database role checks are implemented, but this workspace has not been connected to an organization-hosted PostgreSQL instance. SMS delivery, donor account recovery, consent evidence, and clinical eligibility remain unconfigured. Human review remains mandatory for every contact decision.
-#   R a k t - S a n k e t  
- 
