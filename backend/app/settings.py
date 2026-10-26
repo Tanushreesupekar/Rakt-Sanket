@@ -13,18 +13,30 @@ if APP_ENV not in {"development", "staging", "production"}:
     raise RuntimeError("APP_ENV must be development, staging, or production")
 IS_PRODUCTION = APP_ENV in {"staging", "production"}
 DEMO_SEED = os.getenv("DEMO_SEED", "true" if not IS_PRODUCTION else "false").strip().lower() == "true"
-FRONTEND_ORIGINS = tuple(
-    origin.strip().rstrip("/")
-    for origin in os.getenv("FRONTEND_ORIGINS", os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")).split(",")
-    if origin.strip()
-)
+
+# On Vercel the platform names the hostnames this deployment answers on, as
+# system environment variables. A preview deployment gets a new URL on every
+# push, so trusting exactly these keeps previews working without a wildcard;
+# ALLOWED_HOSTS / FRONTEND_ORIGINS are then only needed for custom domains.
+VERCEL_HOSTS: tuple[str, ...] = tuple(dict.fromkeys(
+    host.strip()
+    for host in (os.getenv("VERCEL_URL"), os.getenv("VERCEL_BRANCH_URL"), os.getenv("VERCEL_PROJECT_PRODUCTION_URL"))
+    if host and host.strip()
+)) if os.getenv("VERCEL") == "1" else ()
+
+configured_origins = os.getenv("FRONTEND_ORIGINS", os.getenv("FRONTEND_ORIGIN"))
+if configured_origins is None:
+    configured_origins = "" if VERCEL_HOSTS else "http://localhost:5173"
+FRONTEND_ORIGINS = tuple(dict.fromkeys((
+    *(origin.strip().rstrip("/") for origin in configured_origins.split(",") if origin.strip()),
+    *(f"https://{host}" for host in VERCEL_HOSTS),
+)))
 if IS_PRODUCTION and (not FRONTEND_ORIGINS or any(not origin.startswith("https://") for origin in FRONTEND_ORIGINS)):
     raise RuntimeError("Production FRONTEND_ORIGINS must contain explicit deployed HTTPS origins")
-ALLOWED_HOSTS = tuple(
-    host.strip()
-    for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,testserver" if not IS_PRODUCTION else "").split(",")
-    if host.strip()
-)
+ALLOWED_HOSTS = tuple(dict.fromkeys((
+    *(host.strip() for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,testserver" if not IS_PRODUCTION else "").split(",") if host.strip()),
+    *VERCEL_HOSTS,
+)))
 if not IS_PRODUCTION and "testserver" not in ALLOWED_HOSTS:
     # Starlette TestClient sends host "testserver"; a local .env that
     # overrides ALLOWED_HOSTS must not break the test suite.

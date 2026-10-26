@@ -23,7 +23,7 @@ Backend terminal:
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r backend\requirements.txt
+python -m pip install -r backend\requirements-dev.txt
 Set-Location backend
 Copy-Item .env.example .env
 uvicorn app.main:app --reload
@@ -56,7 +56,9 @@ FRONTEND_ORIGINS=https://your-frontend-domain.example
 ALLOWED_HOSTS=your-api-domain.example
 ```
 
-The frontend reads the root `.env`; `VITE_API_URL=/api` uses the Vite development proxy. Production builds use [/.env.production.example](.env.production.example): set the deployed API origin and `VITE_AUTH_REQUIRED=true`, then build with `npm run build`.
+The frontend reads the root `.env`; `VITE_API_URL=/api` uses the Vite development proxy. `npm run build` also reads the committed [/.env.production](.env.production), which points at `/api` on the same origin and turns sign-in on. To call an API on another origin instead, set `VITE_API_URL` in the build environment; it overrides the file.
+
+`backend/requirements.txt` is what the running API imports and is all a deployment installs. `backend/requirements-dev.txt` adds the packages that only tests, dataset generation and model training need.
 
 ## Staging and production
 
@@ -69,6 +71,22 @@ The frontend reads the root `.env`; `VITE_API_URL=/api` uses the Vite developmen
 To load the PDF-derived synthetic records into a database after migration, run `python -m app.import_example_data --district <district> --confirm-synthetic-data` from `backend`. This is an explicit, idempotent import; it preserves existing records and adds marked synthetic profiles, stock history, notification outcomes, and inventory summaries. Do not run it with real data unless you intentionally want synthetic records in that database.
 
 `GET /api/health` is a liveness check; `GET /api/ready` checks database connectivity. Point the platform readiness probe at `/api/ready`. A real provider connection is not established in this workspace because the database URL, account secret, and deployment host are not available here.
+
+### Vercel
+
+[vercel.json](vercel.json) deploys both halves as one Vercel project with two [services](https://vercel.com/docs/services): `app` (the Vite build) answers every path, and `backend` (FastAPI, Python 3.12 from `backend/.python-version`) answers `/api/*`. The backend receives the full path, so its `/api/...` routes need no prefix handling, and because the browser calls `/api` on the same origin, neither service calls the other server-side and no service bindings are declared.
+
+Set these in the Vercel project's environment variables:
+
+| Variable | Production | Preview |
+|---|---|---|
+| `APP_ENV` | `production` | `staging` |
+| `DEMO_SEED` | `false` | `false` |
+| `DATABASE_URL` | the production PostgreSQL URL | a **separate** database (for example a Neon branch), so a preview push never touches real donor records |
+| `SECRET_KEY` | a random 32+ character value | a different random value |
+| `ALLOWED_HOSTS`, `FRONTEND_ORIGINS` | only for a custom domain | not needed |
+
+On Vercel the API trusts the hostnames the platform reports for the deployment (`VERCEL_URL`, `VERCEL_BRANCH_URL`, `VERCEL_PROJECT_PRODUCTION_URL`, see `backend/app/settings.py`), so every preview URL works without a wildcard; this needs the project's "Automatically expose System Environment Variables" setting, which is on by default. Add a custom domain to both `ALLOWED_HOSTS` (hostname) and `FRONTEND_ORIGINS` (`https://` origin). Vercel does not run migrations: run `python -m alembic upgrade head` against each database (production and preview) before the first deploy and after any schema change. Each function instance keeps its own sign-in failure counters, so on Vercel the login throttle is per instance; add a [WAF rate limit](https://vercel.com/docs/vercel-firewall/vercel-waf/rate-limiting) on `/api/auth/login` for a shared one.
 
 ### Container image
 
