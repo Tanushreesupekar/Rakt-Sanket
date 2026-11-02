@@ -10,7 +10,7 @@ const sections: { id: DonorSection; label: string; icon: typeof UserRound }[] = 
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'history', label: 'Donation history', icon: History },
 ]
-
+{/* <h1>rakt sanket</h1> */}
 function formatDate(value: string | null) {
   return value ? new Date(value).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Not recorded'
 }
