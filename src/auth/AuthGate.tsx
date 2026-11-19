@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react'
-import { Droplet, Gauge, HeartPulse, LockKeyhole, ShieldCheck, UserPlus } from 'lucide-react'
-import { api, getApiBaseUrl, saveSession, setApiBaseUrl } from '../lib/api'
+import { Droplet, Gauge, Globe, HeartPulse, LockKeyhole, ShieldCheck, UserPlus } from 'lucide-react'
+import { api, getApiBaseUrl, saveSession } from '../lib/api'
 import type { AuthUser } from '../lib/types'
+import ServerConfigModal from '../components/ServerConfigModal'
 
 const bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
 
@@ -12,6 +13,7 @@ export default function AuthGate({ onAuthenticated, roleHint, onBack }: { onAuth
   const [mode, setMode] = useState<'signin' | 'register'>('signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showServerModal, setShowServerModal] = useState(false)
 
   const isDonor = targetRole === 'donor'
   const registering = isDonor && mode === 'register'
@@ -164,18 +166,13 @@ export default function AuthGate({ onAuthenticated, roleHint, onBack }: { onAuth
     <div style={{ marginTop: 8, textAlign: 'center' }}>
       <button
         type="button"
-        style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.72rem', cursor: 'pointer', textDecoration: 'underline' }}
-        onClick={() => {
-          const current = getApiBaseUrl()
-          const custom = window.prompt('Configure Backend API URL (for mobile app / network device):', current)
-          if (custom !== null) {
-            setApiBaseUrl(custom)
-            window.location.reload()
-          }
-        }}
+        style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.78rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, textDecoration: 'underline' }}
+        onClick={() => setShowServerModal(true)}
       >
-        Backend URL: {getApiBaseUrl()}
+        <Globe size={13} />
+        <span>Server: {getApiBaseUrl()} (Tap to change)</span>
       </button>
     </div>
+    {showServerModal && <ServerConfigModal onClose={() => setShowServerModal(false)} />}
   </section></main>
 }
