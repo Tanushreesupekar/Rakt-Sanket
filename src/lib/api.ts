@@ -1,14 +1,17 @@
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, CapacitorHttp } from '@capacitor/core'
 import type { AdminBloodRequest, Advisory, AuthUser, BloodRequest, BloodRequestStatus, DonorAccount, Campaign, Dashboard, Donor, DonorHistory, DonorNotification, EmailStatus, Forecast, Inventory, LoginResult, RegisterDonorInput } from './types'
 
 const TOKEN_KEY = 'raktsanket.access-token'
 const USER_KEY = 'raktsanket.user'
 
+export const VERCEL_API_URL = 'https://rakt-sanket.vercel.app/api'
+
 export const PRESET_SERVERS = [
-  { label: 'Wi-Fi (192.168.1.8)', url: 'http://192.168.1.8:8000/api' },
-  { label: 'Ethernet (192.168.1.25)', url: 'http://192.168.1.25:8000/api' },
+  { label: 'Vercel Cloud (Online Backend)', url: 'https://rakt-sanket.vercel.app/api' },
+  { label: 'Wi-Fi Local (192.168.1.8)', url: 'http://192.168.1.8:8000/api' },
+  { label: 'Ethernet Local (192.168.1.25)', url: 'http://192.168.1.25:8000/api' },
   { label: 'Android Emulator (10.0.2.2)', url: 'http://10.0.2.2:8000/api' },
-  { label: 'Localhost (Web dev)', url: '/api' },
+  { label: 'Localhost Proxy (/api)', url: '/api' },
 ]
 
 export function isNativePlatform(): boolean {
@@ -23,11 +26,16 @@ export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
     const custom = localStorage.getItem('raktsanket_api_url')
     if (custom) return custom.replace(/\/+$/, '')
+
     if (isNativePlatform()) {
-      return 'http://192.168.1.8:8000/api'
+      return VERCEL_API_URL
+    }
+
+    if (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      return `https://${window.location.hostname}/api`
     }
   }
-  return import.meta.env.VITE_API_URL ?? '/api'
+  return import.meta.env.VITE_API_URL || VERCEL_API_URL
 }
 
 export function setApiBaseUrl(url: string) {
@@ -70,9 +78,44 @@ export function hasSessionToken() {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY)
   const baseUrl = getApiBaseUrl()
+  const fullUrl = `${baseUrl}${path}`
+
+  // On native mobile (Capacitor), use CapacitorHttp to bypass browser CORS preflight restrictions
+  if (isNativePlatform()) {
+    try {
+      const options = {
+        url: fullUrl,
+        method: init?.method ?? 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(init?.headers as Record<string, string>),
+        },
+        data: init?.body ? (typeof init.body === 'string' ? JSON.parse(init.body) : init.body) : undefined,
+      }
+      const response = await CapacitorHttp.request(options)
+      if (response.status >= 200 && response.status < 300) {
+        return response.data as T
+      }
+      if (response.status === 401 && import.meta.env.VITE_AUTH_REQUIRED === 'true' && path !== '/auth/login') {
+        clearSession()
+        window.location.assign('/')
+      }
+      const detail = response.data?.detail
+      throw new Error(errorMessage(detail, response.status))
+    } catch (nativeErr) {
+      if (nativeErr instanceof Error && !nativeErr.message.includes('Cannot reach server') && !nativeErr.message.includes('Failed to fetch')) {
+        throw nativeErr
+      }
+      const msg = nativeErr instanceof Error ? nativeErr.message : String(nativeErr)
+      throw new Error(`Cannot reach server at "${baseUrl}". Check internet connection or tap Server Settings. (${msg})`)
+    }
+  }
+
+  // On Web browser, use standard fetch
   let response: Response
   try {
-    response = await fetch(`${baseUrl}${path}`, {
+    response = await fetch(fullUrl, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
@@ -82,8 +125,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     })
   } catch (fetchErr) {
     const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr)
-    throw new Error(`Cannot reach server at "${baseUrl}". Check that the backend is running and your phone is on the same Wi-Fi. (${msg})`)
+    throw new Error(`Cannot reach server at "${baseUrl}". Check network or tap Server Settings. (${msg})`)
   }
+
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { detail?: unknown } | null
     // a 401 on the sign-in request itself is a wrong password, not an expired session

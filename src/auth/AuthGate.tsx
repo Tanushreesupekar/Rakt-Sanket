@@ -31,7 +31,7 @@ export default function AuthGate({ onAuthenticated, roleHint, onBack }: { onAuth
     try {
       let session = await api.login(email.trim(), password)
       
-      // If user is logging into Admin Console but has a donor role, elevate in dev mode
+      // If user is logging into Admin Console but has a donor role,,, elevate in dev mode
       if (targetRole === 'admin' && session.user.role !== 'admin') {
         try {
           saveSession(session)
