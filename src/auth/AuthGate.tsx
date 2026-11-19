@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Droplet, Gauge, HeartPulse, LockKeyhole, ShieldCheck, UserPlus } from 'lucide-react'
-import { api, saveSession } from '../lib/api'
+import { api, getApiBaseUrl, saveSession, setApiBaseUrl } from '../lib/api'
 import type { AuthUser } from '../lib/types'
 
 const bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
@@ -161,5 +161,21 @@ export default function AuthGate({ onAuthenticated, roleHint, onBack }: { onAuth
     </form>}
 
     <p className="auth-footnote"><ShieldCheck size={14} />{registering ? 'Your account is separate from any imported donor record. Blood bank staff can review and update your profile.' : 'Your account permissions determine the workspace you can access.'}</p>
+    <div style={{ marginTop: 8, textAlign: 'center' }}>
+      <button
+        type="button"
+        style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.72rem', cursor: 'pointer', textDecoration: 'underline' }}
+        onClick={() => {
+          const current = getApiBaseUrl()
+          const custom = window.prompt('Configure Backend API URL (for mobile app / network device):', current)
+          if (custom !== null) {
+            setApiBaseUrl(custom)
+            window.location.reload()
+          }
+        }}
+      >
+        Backend URL: {getApiBaseUrl()}
+      </button>
+    </div>
   </section></main>
 }

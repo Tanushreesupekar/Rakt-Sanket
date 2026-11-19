@@ -136,3 +136,27 @@ def build_campaign_email(
         "RaktSanket\n"
     )
     return OutboundEmail(to=to, subject=subject, body=body)
+
+
+def send_test_email(to_address: str) -> tuple[bool, str]:
+    """Test SMTP connection and deliver a single diagnostic email."""
+    if not email_configured():
+        return False, "SMTP is not configured (set SMTP_HOST, SMTP_USERNAME, and SMTP_PASSWORD in backend/.env)"
+    test_email = OutboundEmail(
+        to=to_address,
+        subject="[RaktSanket] SMTP Outreach Test Email",
+        body=(
+            "Hello,\n\n"
+            "This is a test notification from the RaktSanket blood operations platform.\n"
+            "Your SMTP configuration is active and working properly!\n\n"
+            "When district admins trigger outreach rounds, eligible donors with active logins in "
+            "that district will receive shortage activation emails automatically.\n\n"
+            "Best regards,\n"
+            "RaktSanket Operations Team\n"
+        ),
+    )
+    result = send_emails([test_email])
+    if result.sent > 0:
+        return True, f"Test email successfully sent to {to_address}"
+    return False, result.error or "Failed to deliver test email."
+

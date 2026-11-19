@@ -1,12 +1,39 @@
 import type { AdminBloodRequest, Advisory, AuthUser, BloodRequest, BloodRequestStatus, DonorAccount, Campaign, Dashboard, Donor, DonorHistory, DonorNotification, EmailStatus, Forecast, Inventory, LoginResult, RegisterDonorInput } from './types'
 
-const API_URL = import.meta.env.VITE_API_URL ?? '/api'
 const TOKEN_KEY = 'raktsanket.access-token'
 const USER_KEY = 'raktsanket.user'
 
+export function isNativePlatform(): boolean {
+  if (typeof window === 'undefined') return false
+  const w = window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }
+  return Boolean(w.Capacitor?.isNativePlatform?.())
+}
+
+export function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('raktsanket_api_url')
+    if (custom) return custom.replace(/\/+$/, '')
+    if (isNativePlatform()) {
+      return 'http://10.0.2.2:8000/api'
+    }
+  }
+  return import.meta.env.VITE_API_URL ?? '/api'
+}
+
+export function setApiBaseUrl(url: string) {
+  if (typeof window !== 'undefined') {
+    if (!url.trim()) {
+      localStorage.removeItem('raktsanket_api_url')
+    } else {
+      localStorage.setItem('raktsanket_api_url', url.trim())
+    }
+  }
+}
+
 export function getSessionUser(): AuthUser | null {
   try {
-    return JSON.parse(sessionStorage.getItem(USER_KEY) ?? 'null') as AuthUser | null
+    const raw = sessionStorage.getItem(USER_KEY) ?? localStorage.getItem(USER_KEY)
+    return JSON.parse(raw ?? 'null') as AuthUser | null
   } catch {
     return null
   }
@@ -15,20 +42,25 @@ export function getSessionUser(): AuthUser | null {
 export function saveSession(login: LoginResult) {
   sessionStorage.setItem(TOKEN_KEY, login.access_token)
   sessionStorage.setItem(USER_KEY, JSON.stringify(login.user))
+  localStorage.setItem(TOKEN_KEY, login.access_token)
+  localStorage.setItem(USER_KEY, JSON.stringify(login.user))
 }
 
 export function clearSession() {
   sessionStorage.removeItem(TOKEN_KEY)
   sessionStorage.removeItem(USER_KEY)
+  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(USER_KEY)
 }
 
 export function hasSessionToken() {
-  return Boolean(sessionStorage.getItem(TOKEN_KEY))
+  return Boolean(sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY))
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = sessionStorage.getItem(TOKEN_KEY)
-  const response = await fetch(`${API_URL}${path}`, {
+  const token = sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY)
+  const baseUrl = getApiBaseUrl()
+  const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
@@ -87,6 +119,7 @@ export const api = {
   createDonorAccount: (body: { donor_id: number; email: string; password: string }) => request<AuthUser>('/admin/donor-accounts', { method: 'POST', body: JSON.stringify(body) }),
   donorAccounts: () => request<DonorAccount[]>('/admin/donor-accounts'),
   emailStatus: () => request<EmailStatus>('/admin/email-status'),
+  testEmail: (toEmail?: string) => request<{ ok: boolean; message: string }>('/admin/test-email', { method: 'POST', body: JSON.stringify(toEmail ? { to_email: toEmail } : {}) }),
   adminBloodRequests: (district?: string) => request<AdminBloodRequest[]>(`/admin/blood-requests${district ? `?district=${encodeURIComponent(district)}` : ''}`),
   reviewBloodRequest: (id: number, body: { status: Exclude<BloodRequestStatus, 'pending review'>; note?: string }) => request<AdminBloodRequest>(`/admin/blood-requests/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
 }

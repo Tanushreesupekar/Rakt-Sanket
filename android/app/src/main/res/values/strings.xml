@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">RaktSanket</string>
+    <string name="title_activity_main">RaktSanket</string>
+    <string name="package_name">org.raktsanket.app</string>
+    <string name="custom_url_scheme">org.raktsanket.app</string>
+</resources>

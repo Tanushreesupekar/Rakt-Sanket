@@ -14,7 +14,7 @@ from app.models import BloodRequest, Campaign, Donor, Inventory, Notification, U
 from app.schemas import AdminBloodRequestOut, AdvisoryOut, AuthUserOut, BloodRequestCreate, BloodRequestOut, BloodRequestReview, DonorAccountOut, CampaignCreate, CampaignOut, DonorAccountCreate, DonorCreate, DonorOut, DonorProfileUpdate, DonorRegister, DonationHistoryOut, EmailStatusOut, ForecastOut, InventoryOut, InventoryUpdate, LoginOut, LoginRequest
 from app.seed import seed_demo_data
 from app.settings import ACCESS_TOKEN_MINUTES, ALLOWED_HOSTS, API_DOCS_ENABLED, APP_ENV, DEMO_SEED, FRONTEND_ORIGINS, IS_PRODUCTION
-from app.services.email import build_campaign_email, email_configured, send_emails, sender_address
+from app.services.email import build_campaign_email, email_configured, send_emails, sender_address, send_test_email
 from app.services.forecasting import build_forecast, shortage_score
 from app.services.ranking import rank_donors
 from app.services.scoring import active_weights, compute_cbsri, risk_label
@@ -210,6 +210,25 @@ def create_donor_account(
 def admin_email_status(_: User | None = Depends(require_admin)):
     """Lets the outreach screen show whether campaigns will send email."""
     return {"configured": email_configured(), "from_address": sender_address()}
+
+
+@app.post("/api/admin/test-email")
+def admin_test_email(payload: dict | None = None, user: User | None = Depends(require_admin)):
+    """Sends a diagnostic test email to verify SMTP credentials."""
+    from app import settings
+    target = None
+    if payload and isinstance(payload, dict):
+        target = payload.get("to_email")
+    if not target and user:
+        target = user.email
+    if not target:
+        target = settings.SMTP_FROM
+    if not target:
+        raise HTTPException(status_code=400, detail="No destination email provided and no sender email configured.")
+    success, msg = send_test_email(target.strip())
+    if not success:
+        raise HTTPException(status_code=500, detail=msg)
+    return {"ok": True, "message": msg}
 
 
 # Donor rankings run the XGBoost model, so endpoints rank each donor once per
@@ -626,19 +645,29 @@ def campaigns(_: User | None = Depends(require_admin), session: Session = Depend
 @app.post("/api/campaigns", response_model=CampaignOut, status_code=201)
 def create_campaign(payload: CampaignCreate, _: User | None = Depends(require_admin), session: Session = Depends(get_db)):
     inventory_item = session.scalar(select(Inventory).where(
-        Inventory.district == payload.district,
+        func.lower(Inventory.district) == payload.district.lower(),
         Inventory.blood_group == payload.blood_group,
     ))
     if not inventory_item:
         raise HTTPException(status_code=404, detail="No inventory found for that district and blood group")
 
     candidates = session.scalars(select(Donor).where(
-        Donor.district == payload.district,
+        func.lower(Donor.district) == payload.district.lower(),
         Donor.blood_group == payload.blood_group,
     )).all()
     ranked = rank_by_id(candidates)
     eligible = [donor for donor in candidates if ranked[donor.id]["eligible"]]
-    eligible.sort(key=lambda donor: ranked[donor.id]["priority_score"], reverse=True)
+    # Prioritize donors with linked user accounts so that real email addresses receive outreach
+    registered_donor_ids = set(session.scalars(
+        select(User.donor_id).where(User.donor_id.isnot(None), User.is_active.is_(True))
+    ).all())
+    eligible.sort(
+        key=lambda donor: (
+            1 if donor.id in registered_donor_ids else 0,
+            ranked[donor.id]["priority_score"]
+        ),
+        reverse=True
+    )
     start = (payload.stage - 1) * payload.batch_size
     selected = eligible[start:start + payload.batch_size]
     scores = calculate_group_scores(session, inventory_item, rankings=rankings_by_group(candidates, ranked))

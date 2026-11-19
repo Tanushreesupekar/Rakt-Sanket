@@ -1,9 +1,27 @@
+import { useState, type FormEvent } from 'react'
 import { Check, Clock3, Mail, Radio, Send, ShieldCheck, TriangleAlert } from 'lucide-react'
 import { bloodGroups } from '../components/shared'
 import type { Campaign } from '../../lib/types'
-import type { FormEvent } from 'react'
+import { api } from '../../lib/api'
 
 export function OutreachView({ campaigns, district, bloodGroup, setBloodGroup, stage, setStage, batchSize, setBatchSize, result, busy, emailConfigured, onSubmit }: { campaigns: Campaign[]; district: string; bloodGroup: string; setBloodGroup: (value: string) => void; stage: number; setStage: (value: number) => void; batchSize: number; setBatchSize: (value: number) => void; result: Campaign | null; busy: boolean; emailConfigured: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  const [testEmailAddr, setTestEmailAddr] = useState('')
+  const [testSending, setTestSending] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null)
+
+  async function handleSendTest() {
+    setTestSending(true)
+    setTestResult(null)
+    try {
+      const res = await api.testEmail(testEmailAddr.trim() || undefined)
+      setTestResult({ ok: true, text: res.message })
+    } catch (err) {
+      setTestResult({ ok: false, text: err instanceof Error ? err.message : 'Test email failed. Check SMTP credentials in backend/.env' })
+    } finally {
+      setTestSending(false)
+    }
+  }
+
   return <div className="outreach-grid">
     <section className="panel campaign-panel">
       <div className="eyebrow">STAGED DONOR ACTIVATION</div>
@@ -15,8 +33,39 @@ export function OutreachView({ campaigns, district, bloodGroup, setBloodGroup, s
         <div className="stage-selector">{[1, 2, 3].map((number) => <button type="button" key={number} className={`stage-option ${stage === number ? 'stage-active' : ''}`} onClick={() => setStage(number)}><span className="stage-number">0{number}</span><strong>{['Priority', 'Expanded', 'Wider'][number - 1]}</strong><small>{['Top ranked donors', 'Next eligible group', 'Remaining candidates'][number - 1]}</small></button>)}</div>
         <label>Donors in this batch<input type="number" min="1" max="100" value={batchSize} onChange={(event) => setBatchSize(Number(event.target.value))} /></label>
         <button className="button button-primary full-button" disabled={busy}>{busy ? <><span className="button-spinner" />Preparing outreach…</> : <><Send size={16} />{emailConfigured ? 'Prepare list & send email' : 'Prepare contact list'}</>}</button>
-        <div className="consent-note"><ShieldCheck size={15} /><span>{emailConfigured ? 'Email is sent only to selected donors who have a linked, active donor login. Review consent, donation interval and local eligibility before contact.' : 'SMTP is not configured. This round is stored as simulated; add SMTP settings to deliver email.'}</span></div>
+        <div className="consent-note"><ShieldCheck size={15} /><span>{emailConfigured ? 'Email is sent only to selected donors who have a linked, active donor login. Review consent, donation interval and local eligibility before contact.' : 'SMTP is not configured. This round is stored as simulated; add SMTP settings in backend/.env to deliver email.'}</span></div>
       </form>
+
+      <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border-color, #e2e8f0)' }}>
+        <div className="eyebrow">SMTP DIAGNOSTICS</div>
+        <h3 style={{ fontSize: '0.95rem', margin: '4px 0 8px', fontWeight: 600 }}>Test email delivery</h3>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted, #64748b)', margin: '0 0 10px' }}>
+          {emailConfigured ? 'SMTP is enabled. Send a test email to verify credentials and inbox delivery.' : 'SMTP is not configured yet. Set SMTP credentials in backend/.env.'}
+        </p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            type="email"
+            placeholder="Recipient email address"
+            value={testEmailAddr}
+            onChange={(e) => setTestEmailAddr(e.target.value)}
+            style={{ flex: 1, padding: '6px 10px', fontSize: '0.85rem', borderRadius: 6, border: '1px solid #cbd5e1' }}
+          />
+          <button
+            type="button"
+            className="button button-outline"
+            style={{ whiteSpace: 'nowrap', padding: '6px 14px' }}
+            disabled={testSending || !emailConfigured}
+            onClick={handleSendTest}
+          >
+            {testSending ? 'Sending…' : 'Send test'}
+          </button>
+        </div>
+        {testResult && (
+          <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 6, fontSize: '0.82rem', backgroundColor: testResult.ok ? '#ecfdf5' : '#fef2f2', color: testResult.ok ? '#065f46' : '#991b1b', border: `1px solid ${testResult.ok ? '#a7f3d0' : '#fecaca'}` }}>
+            {testResult.text}
+          </div>
+        )}
+      </div>
     </section>
 
     <section className="panel campaign-history">
