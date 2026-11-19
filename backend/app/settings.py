@@ -69,4 +69,33 @@ ACCESS_TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", "30"))
 if ACCESS_TOKEN_MINUTES < 5 or ACCESS_TOKEN_MINUTES > 120:
     raise RuntimeError("ACCESS_TOKEN_MINUTES must be between 5 and 120")
 
+
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# SMTP is optional. With no SMTP_HOST, outreach rounds stay simulated and the
+# console shows that email delivery is not configured.
+SMTP_ENABLED = _env_flag("SMTP_ENABLED", True)
+SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+if SMTP_PORT < 1 or SMTP_PORT > 65535:
+    raise RuntimeError("SMTP_PORT must be between 1 and 65535")
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "").strip()
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM = os.getenv("SMTP_FROM", "").strip() or SMTP_USERNAME
+SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "RaktSanket").strip() or "RaktSanket"
+SMTP_USE_TLS = _env_flag("SMTP_USE_TLS", True)
+SMTP_USE_SSL = _env_flag("SMTP_USE_SSL", False)
+SMTP_TIMEOUT_SECONDS = int(os.getenv("SMTP_TIMEOUT_SECONDS", "15"))
+if SMTP_USE_TLS and SMTP_USE_SSL:
+    raise RuntimeError("Set either SMTP_USE_TLS or SMTP_USE_SSL, not both")
+if SMTP_HOST and not SMTP_FROM:
+    raise RuntimeError("SMTP_FROM (or SMTP_USERNAME) is required when SMTP_HOST is set")
+if SMTP_TIMEOUT_SECONDS < 1 or SMTP_TIMEOUT_SECONDS > 120:
+    raise RuntimeError("SMTP_TIMEOUT_SECONDS must be between 1 and 120")
+
 API_DOCS_ENABLED = not IS_PRODUCTION or os.getenv("ENABLE_API_DOCS", "false").lower() == "true"

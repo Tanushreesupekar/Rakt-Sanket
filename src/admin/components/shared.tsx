@@ -1,13 +1,14 @@
-import { Activity, BarChart3, Bell, Gauge, LayoutDashboard, PackageCheck, Radio, Users, ArrowDownRight, X } from 'lucide-react'
+import { Activity, BarChart3, Bell, Gauge, HeartPulse, LayoutDashboard, PackageCheck, Radio, Users, ArrowDownRight, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 
-export type AdminView = 'overview' | 'inventory' | 'forecast' | 'donors' | 'ranking' | 'notifications' | 'analytics' | 'outreach'
+export type AdminView = 'overview' | 'inventory' | 'forecast' | 'donors' | 'requests' | 'ranking' | 'notifications' | 'analytics' | 'outreach'
 
 export const adminNavigation: { id: AdminView; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'inventory', label: 'Blood Inventory', icon: PackageCheck },
   { id: 'forecast', label: 'Demand Forecast', icon: Activity },
   { id: 'donors', label: 'Donor Management', icon: Users },
+  { id: 'requests', label: 'Blood Requests', icon: HeartPulse },
   { id: 'ranking', label: 'CBSRI Ranking', icon: Gauge },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
@@ -40,11 +41,12 @@ export function pageDescription(view: AdminView) {
     overview: 'District-level availability and donor response outlook.',
     inventory: 'Current units, projected cover, and safety stock by blood group.',
     forecast: 'Review projected stock movement and the safety threshold for each blood group.',
-    donors: 'Review eligible donors and their fatigue-adjusted activation priority.',
+    donors: 'Review eligible donors, their activation priority, and who has a donor login.',
+    requests: 'Blood requests donors have submitted. Approve, reject or mark them fulfilled; donors see the decision.',
     ranking: 'CBSRI-ranked donor response priority with model explanations.',
-    notifications: 'Review staged donor activation records and delivery status.',
+    notifications: 'Review staged donor activation records and email delivery status.',
     analytics: 'District stock, shortage risk, donor coverage, and outreach activity.',
-    outreach: 'Simulate staged contact lists for human review before activation.',
+    outreach: 'Build a prioritized contact list and send email to donors with a linked login.',
   }[view]
 }
 

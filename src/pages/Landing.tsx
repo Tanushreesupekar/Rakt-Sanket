@@ -30,7 +30,7 @@ export default function Landing({ onAdmin, onDonor }: { onAdmin: () => void; onD
             </p>
             <div className="landing-hero-actions">
               <button className="button button-primary" onClick={onAdmin}><Gauge size={15} />Open admin console</button>
-              <button className="button button-outline" onClick={onDonor}><HeartPulse size={15} />Go to donor space</button>
+              <button className="button button-outline" onClick={onDonor}><HeartPulse size={15} />Donor sign in / register</button>
             </div>
             <div className="landing-hero-meta">
               <span><ShieldCheck size={14} />Human review required before donor contact</span>
@@ -79,7 +79,7 @@ export default function Landing({ onAdmin, onDonor }: { onAdmin: () => void; onD
 
       <footer className="landing-footer">
         <span>RaktSanket · Pilot operations console · Demo data only — validate before operational use</span>
-        <span><ShieldCheck size={14} />Simulated outreach — no SMS is sent from this demo</span>
+        <span><ShieldCheck size={14} />Email outreach is sent only when SMTP is configured; otherwise rounds are recorded as simulated</span>
       </footer>
     </div>
   )

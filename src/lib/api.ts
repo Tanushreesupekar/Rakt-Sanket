@@ -1,4 +1,4 @@
-import type { Advisory, AuthUser, BloodRequest, Campaign, Dashboard, Donor, DonorHistory, DonorNotification, Forecast, Inventory, LoginResult } from './types'
+import type { AdminBloodRequest, Advisory, AuthUser, BloodRequest, BloodRequestStatus, DonorAccount, Campaign, Dashboard, Donor, DonorHistory, DonorNotification, EmailStatus, Forecast, Inventory, LoginResult, RegisterDonorInput } from './types'
 
 const API_URL = import.meta.env.VITE_API_URL ?? '/api'
 const TOKEN_KEY = 'raktsanket.access-token'
@@ -81,6 +81,12 @@ export const api = {
   bloodRequests: (id: number) => request<BloodRequest[]>(`/blood-requests?donor_id=${id}`),
   createBloodRequest: (body: Omit<BloodRequest, 'id' | 'status' | 'created_at'>) => request<BloodRequest>('/blood-requests', { method: 'POST', body: JSON.stringify(body) }),
   login: (email: string, password: string) => request<LoginResult>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  registerDonor: (body: RegisterDonorInput) => request<LoginResult>('/auth/register', { method: 'POST', body: JSON.stringify(body) }),
   currentUser: () => request<AuthUser>('/auth/me'),
+  switchRole: (role: 'admin' | 'donor') => request<LoginResult>(`/auth/switch-role?target_role=${role}`, { method: 'POST' }),
   createDonorAccount: (body: { donor_id: number; email: string; password: string }) => request<AuthUser>('/admin/donor-accounts', { method: 'POST', body: JSON.stringify(body) }),
+  donorAccounts: () => request<DonorAccount[]>('/admin/donor-accounts'),
+  emailStatus: () => request<EmailStatus>('/admin/email-status'),
+  adminBloodRequests: (district?: string) => request<AdminBloodRequest[]>(`/admin/blood-requests${district ? `?district=${encodeURIComponent(district)}` : ''}`),
+  reviewBloodRequest: (id: number, body: { status: Exclude<BloodRequestStatus, 'pending review'>; note?: string }) => request<AdminBloodRequest>(`/admin/blood-requests/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
 }
