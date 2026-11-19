@@ -16,4 +16,8 @@ os.environ.update({
     "FRONTEND_ORIGINS": "http://localhost:5173",
     "SECRET_KEY": "unit-test-only-secret-key-not-for-deployment",
     "ACCESS_TOKEN_MINUTES": "30",
+    "SMTP_HOST": "",
+    "SMTP_USERNAME": "",
+    "SMTP_PASSWORD": "",
+    "SMTP_FROM": "",
 })

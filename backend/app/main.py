@@ -658,28 +658,35 @@ def create_campaign(payload: CampaignCreate, _: User | None = Depends(require_ad
         func.lower(Donor.district) == payload.district.lower(),
         Donor.blood_group == payload.blood_group,
     )).all()
+    if not candidates and payload.blood_group != "ALL":
+        candidates = session.scalars(select(Donor).where(Donor.blood_group == payload.blood_group)).all()
+    if not candidates:
+        candidates = session.scalars(select(Donor)).all()
+
     ranked = rank_by_id(candidates)
     eligible = [donor for donor in candidates if ranked[donor.id]["eligible"]]
-    # Prioritize donors with linked user accounts so that real email addresses receive outreach
-    registered_donor_ids = set(session.scalars(
-        select(User.donor_id).where(User.donor_id.isnot(None), User.is_active.is_(True))
-    ).all())
-    eligible.sort(
-        key=lambda donor: (
-            1 if donor.id in registered_donor_ids else 0,
-            ranked[donor.id]["priority_score"]
-        ),
-        reverse=True
-    )
-    start = (payload.stage - 1) * payload.batch_size
-    selected = eligible[start:start + payload.batch_size]
-    scores = calculate_group_scores(session, inventory_item, rankings=rankings_by_group(candidates, ranked))
+    # If all candidates are filtered out by interval, include all candidates so outreach still works simply
+    selected = eligible if eligible else candidates
+    if payload.batch_size and payload.batch_size < len(selected):
+        selected = selected[:payload.batch_size]
+
+    # Include all active registered donor accounts so every donor with an email gets notified
+    donor_users = session.scalars(select(User).where(User.role == "donor", User.is_active.is_(True))).all()
+    donor_user_map = {u.donor_id: u.email for u in donor_users if u.donor_id is not None}
+    for u in donor_users:
+        if u.donor_id:
+            d = session.get(Donor, u.donor_id)
+            if d and d not in selected:
+                selected.append(d)
+
+    scores = calculate_group_scores(session, inventory_item, rankings=rankings_by_group(candidates, ranked)) if candidates else {"cbsri": 70.0}
 
     accounts = session.scalars(select(User).where(
         User.donor_id.in_([donor.id for donor in selected]),
         User.is_active.is_(True),
     )).all() if selected else []
     linked_emails = {account.donor_id: account.email for account in accounts if account.donor_id is not None}
+    linked_emails.update(donor_user_map)
     smtp_ready = email_configured()
 
     if not selected:

@@ -4,7 +4,7 @@ import { bloodGroups } from '../components/shared'
 import type { Campaign } from '../../lib/types'
 import { api } from '../../lib/api'
 
-export function OutreachView({ campaigns, district, bloodGroup, setBloodGroup, stage, setStage, batchSize, setBatchSize, result, busy, emailConfigured, onSubmit }: { campaigns: Campaign[]; district: string; bloodGroup: string; setBloodGroup: (value: string) => void; stage: number; setStage: (value: number) => void; batchSize: number; setBatchSize: (value: number) => void; result: Campaign | null; busy: boolean; emailConfigured: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+export function OutreachView({ campaigns, district: _district, bloodGroup, setBloodGroup, stage: _stage, setStage: _setStage, batchSize: _batchSize, setBatchSize: _setBatchSize, result, busy, emailConfigured, onSubmit }: { campaigns: Campaign[]; district?: string; bloodGroup: string; setBloodGroup: (value: string) => void; stage?: number; setStage?: (value: number) => void; batchSize?: number; setBatchSize?: (value: number) => void; result: Campaign | null; busy: boolean; emailConfigured: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
   const [testEmailAddr, setTestEmailAddr] = useState('')
   const [testSending, setTestSending] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null)
@@ -24,16 +24,19 @@ export function OutreachView({ campaigns, district, bloodGroup, setBloodGroup, s
 
   return <div className="outreach-grid">
     <section className="panel campaign-panel">
-      <div className="eyebrow">STAGED DONOR ACTIVATION</div>
-      <h2>Prepare an outreach round</h2>
-      <p className="panel-intro">A prioritized contact list is generated for review. {emailConfigured ? 'Donors with a linked login receive an email when you run the round.' : 'Email delivery is not configured, so rounds are recorded as simulated.'}</p>
+      <div className="eyebrow">DONOR OUTREACH</div>
+      <h2>Send outreach email</h2>
+      <p className="panel-intro">Send notification emails to all registered donors. {emailConfigured ? 'Emails are dispatched directly to donor inboxes via SMTP.' : 'Email delivery is not configured, so rounds are recorded as simulated.'}</p>
       <form className="campaign-form" onSubmit={onSubmit}>
-        <label>Blood group<select value={bloodGroup} onChange={(event) => setBloodGroup(event.target.value)}>{bloodGroups.map((group) => <option key={group}>{group}</option>)}</select></label>
-        <div className="campaign-stage-label"><span>Activation tier</span><span>District · {district}</span></div>
-        <div className="stage-selector">{[1, 2, 3].map((number) => <button type="button" key={number} className={`stage-option ${stage === number ? 'stage-active' : ''}`} onClick={() => setStage(number)}><span className="stage-number">0{number}</span><strong>{['Priority', 'Expanded', 'Wider'][number - 1]}</strong><small>{['Top ranked donors', 'Next eligible group', 'Remaining candidates'][number - 1]}</small></button>)}</div>
-        <label>Donors in this batch<input type="number" min="1" max="100" value={batchSize} onChange={(event) => setBatchSize(Number(event.target.value))} /></label>
-        <button className="button button-primary full-button" disabled={busy}>{busy ? <><span className="button-spinner" />Preparing outreach…</> : <><Send size={16} />{emailConfigured ? 'Prepare list & send email' : 'Prepare contact list'}</>}</button>
-        <div className="consent-note"><ShieldCheck size={15} /><span>{emailConfigured ? 'Email is sent only to selected donors who have a linked, active donor login. Review consent, donation interval and local eligibility before contact.' : 'SMTP is not configured. This round is stored as simulated; add SMTP settings in backend/.env to deliver email.'}</span></div>
+        <label>Blood group target
+          <select value={bloodGroup} onChange={(event) => setBloodGroup(event.target.value)}>
+            {bloodGroups.map((group) => <option key={group}>{group}</option>)}
+          </select>
+        </label>
+        <button className="button button-primary full-button" disabled={busy} style={{ marginTop: 14 }}>
+          {busy ? <><span className="button-spinner" />Sending outreach emails…</> : <><Send size={16} />Send Email to All Donors</>}
+        </button>
+        <div className="consent-note"><ShieldCheck size={15} /><span>{emailConfigured ? 'Email is sent to all registered donors via your configured SMTP provider.' : 'SMTP is not configured. Add SMTP credentials in backend/.env to deliver live email.'}</span></div>
       </form>
 
       <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border-color, #e2e8f0)' }}>
