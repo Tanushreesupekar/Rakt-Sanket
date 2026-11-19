@@ -66,6 +66,14 @@ export interface Campaign {
   status: string
   created_at: string
   donor_names: string[]
+  emailed_count: number
+  email_failed_count: number
+  email_configured: boolean
+}
+
+export interface EmailStatus {
+  configured: boolean
+  from_address: string | null
 }
 
 export interface Advisory {
@@ -85,7 +93,23 @@ export interface BloodRequest {
   district: string
   needed_by: string
   notes: string | null
-  status: string
+  status: BloodRequestStatus
+  created_at: string
+  admin_note?: string | null
+  reviewed_at?: string | null
+}
+
+export type BloodRequestStatus = 'pending review' | 'approved' | 'fulfilled' | 'rejected'
+
+export interface AdminBloodRequest extends BloodRequest {
+  donor_name: string
+}
+
+export interface DonorAccount {
+  id: number
+  email: string
+  donor_id: number | null
+  is_active: boolean
   created_at: string
 }
 
@@ -112,6 +136,18 @@ export interface AuthUser {
   email: string
   role: 'admin' | 'donor'
   donor_id: number | null
+}
+
+export interface RegisterDonorInput {
+  name: string
+  email: string
+  password: string
+  district: string
+  blood_group: string
+  age: number
+  last_donation_date: string | null
+  donations_count: number
+  consent: boolean
 }
 
 export interface LoginResult {

@@ -7,13 +7,14 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
 
-from app.auth import authorize_donor_access, create_access_token, get_current_user, hash_password, login_throttle, require_admin, verify_login
+from app.auth import authorize_donor_access, create_access_token, get_current_user, hash_password, login_throttle, registration_throttle, require_admin, verify_login
 from app.database import SessionLocal, engine, get_db
 from app.ml.donor_response import model_status
 from app.models import BloodRequest, Campaign, Donor, Inventory, Notification, User
-from app.schemas import AdvisoryOut, AuthUserOut, BloodRequestCreate, BloodRequestOut, CampaignCreate, CampaignOut, DonorAccountCreate, DonorCreate, DonorOut, DonorProfileUpdate, DonationHistoryOut, ForecastOut, InventoryOut, InventoryUpdate, LoginOut, LoginRequest
+from app.schemas import AdminBloodRequestOut, AdvisoryOut, AuthUserOut, BloodRequestCreate, BloodRequestOut, BloodRequestReview, DonorAccountOut, CampaignCreate, CampaignOut, DonorAccountCreate, DonorCreate, DonorOut, DonorProfileUpdate, DonorRegister, DonationHistoryOut, EmailStatusOut, ForecastOut, InventoryOut, InventoryUpdate, LoginOut, LoginRequest
 from app.seed import seed_demo_data
 from app.settings import ACCESS_TOKEN_MINUTES, ALLOWED_HOSTS, API_DOCS_ENABLED, APP_ENV, DEMO_SEED, FRONTEND_ORIGINS, IS_PRODUCTION
+from app.services.email import build_campaign_email, email_configured, send_emails, sender_address, send_test_email
 from app.services.forecasting import build_forecast, shortage_score
 from app.services.ranking import rank_donors
 from app.services.scoring import active_weights, compute_cbsri, risk_label
@@ -101,6 +102,10 @@ def login(payload: LoginRequest, request: Request, session: Session = Depends(ge
         login_throttle.record_failure(email, client)
         raise HTTPException(status_code=401, detail="Email or password is incorrect")
     login_throttle.record_success(email)
+    return _session_payload(user)
+
+
+def _session_payload(user: User) -> dict:
     return {
         "access_token": create_access_token(user),
         "expires_in": ACCESS_TOKEN_MINUTES * 60,
@@ -108,11 +113,76 @@ def login(payload: LoginRequest, request: Request, session: Session = Depends(ge
     }
 
 
+@app.post("/api/auth/register", response_model=LoginOut, status_code=201)
+def register_donor(payload: DonorRegister, request: Request, session: Session = Depends(get_db)):
+    """Public donor self-registration.
+
+    Creates a donor record and its login together, then signs the donor in.
+    Existing donor records provisioned by a blood bank are linked through the
+    admin console, not claimed through this endpoint."""
+    client = request.client.host if request.client else "unknown"
+    wait = registration_throttle.retry_after(client)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many account registrations from this network. Try again later.",
+            headers={"Retry-After": str(wait)},
+        )
+    registration_throttle.record(client)
+    if not payload.consent:
+        raise HTTPException(status_code=400, detail="Consent to be contacted about blood donation is required")
+    normalized_email = payload.email.strip().casefold()
+    if session.scalar(select(User.id).where(User.email == normalized_email)):
+        raise HTTPException(status_code=409, detail="An account with that email already exists. Sign in instead.")
+    donor = Donor(
+        name=payload.name.strip(),
+        district=payload.district.strip(),
+        blood_group=payload.blood_group,
+        age=payload.age,
+        last_donation_date=payload.last_donation_date,
+        donations_count=payload.donations_count,
+        response_rate=0.5,
+        notifications_30d=0,
+        available=True,
+    )
+    session.add(donor)
+    session.flush()
+    user = User(
+        email=normalized_email,
+        password_hash=hash_password(payload.password),
+        role="donor",
+        donor_id=donor.id,
+        is_active=True,
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return _session_payload(user)
+
+
 @app.get("/api/auth/me", response_model=AuthUserOut)
 def current_account(user: User | None = Depends(get_current_user)):
     if user is None:
         return {"id": 0, "email": "demo@localhost", "role": "admin", "donor_id": None}
     return user
+
+
+@app.post("/api/auth/switch-role", response_model=LoginOut)
+def switch_role(target_role: str = Query(..., pattern="^(admin|donor)$"), user: User | None = Depends(get_current_user), session: Session = Depends(get_db)):
+    if IS_PRODUCTION:
+        raise HTTPException(status_code=403, detail="Role switching is disabled in production")
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    user.role = target_role
+    session.commit()
+    session.refresh(user)
+    return _session_payload(user)
+
+
+@app.get("/api/admin/donor-accounts", response_model=list[DonorAccountOut])
+def donor_accounts(_: User | None = Depends(require_admin), session: Session = Depends(get_db)):
+    """Donor logins, so the console can show which donor records have one."""
+    return session.scalars(select(User).where(User.role == "donor").order_by(User.created_at)).all()
 
 
 @app.post("/api/admin/donor-accounts", response_model=AuthUserOut, status_code=201)
@@ -134,6 +204,31 @@ def create_donor_account(
     session.commit()
     session.refresh(user)
     return user
+
+
+@app.get("/api/admin/email-status", response_model=EmailStatusOut)
+def admin_email_status(_: User | None = Depends(require_admin)):
+    """Lets the outreach screen show whether campaigns will send email."""
+    return {"configured": email_configured(), "from_address": sender_address()}
+
+
+@app.post("/api/admin/test-email")
+def admin_test_email(payload: dict | None = None, user: User | None = Depends(require_admin)):
+    """Sends a diagnostic test email to verify SMTP credentials."""
+    from app import settings
+    target = None
+    if payload and isinstance(payload, dict):
+        target = payload.get("to_email")
+    if not target and user:
+        target = user.email
+    if not target:
+        target = settings.SMTP_FROM
+    if not target:
+        raise HTTPException(status_code=400, detail="No destination email provided and no sender email configured.")
+    success, msg = send_test_email(target.strip())
+    if not success:
+        raise HTTPException(status_code=500, detail=msg)
+    return {"ok": True, "message": msg}
 
 
 # Donor rankings run the XGBoost model, so endpoints rank each donor once per
@@ -410,7 +505,16 @@ def donor_notifications(donor_id: int, user: User | None = Depends(get_current_u
         "stage": campaign.stage,
         "cbsri": campaign.cbsri,
         "status": notification.status,
-        "message": f"A {campaign.blood_group} donor activation was prepared for {campaign.district}. This is a simulated notification.",
+        "message": (
+            f"An email about this {campaign.blood_group} donor activation in {campaign.district} "
+            "was sent to your registered address."
+            if notification.status == "emailed"
+            else f"Email delivery failed for this {campaign.blood_group} donor activation in "
+                 f"{campaign.district}. The request is still recorded in your portal."
+            if notification.status == "email failed"
+            else f"A {campaign.blood_group} donor activation was recorded for {campaign.district}. "
+                 "No email was sent for this notification."
+        ),
     } for notification, campaign in entries]
 
 
@@ -458,8 +562,64 @@ def create_blood_request(payload: BloodRequestCreate, user: User | None = Depend
     return request
 
 
+# Which review decisions each request status allows. Fulfilled and rejected
+# are final, so a closed request cannot be reopened by accident.
+REVIEW_TRANSITIONS = {
+    "pending review": {"approved", "rejected"},
+    "approved": {"fulfilled", "rejected"},
+}
+
+
+def admin_request_out(request: BloodRequest, donor_name: str) -> dict:
+    return {**BloodRequestOut.model_validate(request, from_attributes=True).model_dump(), "donor_name": donor_name}
+
+
+@app.get("/api/admin/blood-requests", response_model=list[AdminBloodRequestOut])
+def admin_blood_requests(
+    district: str | None = None,
+    status: str | None = None,
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_db),
+):
+    query = select(BloodRequest, Donor.name).join(Donor, BloodRequest.donor_id == Donor.id)
+    if district and district.strip():
+        # donors type the district themselves, so match it case-insensitively
+        query = query.where(func.lower(BloodRequest.district) == district.strip().lower())
+    if status:
+        query = query.where(BloodRequest.status == status)
+    rows = session.execute(query.order_by(BloodRequest.created_at.desc()).limit(500)).all()
+    return [admin_request_out(request, name) for request, name in rows]
+
+
+@app.patch("/api/admin/blood-requests/{request_id}", response_model=AdminBloodRequestOut)
+def review_blood_request(
+    request_id: int,
+    payload: BloodRequestReview,
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_db),
+):
+    request = session.get(BloodRequest, request_id)
+    if request is None:
+        raise HTTPException(status_code=404, detail="Blood request not found")
+    if payload.status not in REVIEW_TRANSITIONS.get(request.status, set()):
+        raise HTTPException(status_code=409, detail=f"A request that is {request.status} cannot be marked {payload.status}")
+    request.status = payload.status
+    request.reviewed_at = datetime.now(timezone.utc)
+    if payload.note is not None and payload.note.strip():
+        request.admin_note = payload.note.strip()
+    session.commit()
+    session.refresh(request)
+    donor = session.get(Donor, request.donor_id)
+    return admin_request_out(request, donor.name if donor else "Unknown donor")
+
+
 def campaign_out(session: Session, campaign: Campaign) -> dict:
     names = session.scalars(select(Donor.name).join(Notification).where(Notification.campaign_id == campaign.id)).all()
+    status_counts = dict(session.execute(
+        select(Notification.status, func.count())
+        .where(Notification.campaign_id == campaign.id)
+        .group_by(Notification.status)
+    ).all())
     return {
         "id": campaign.id,
         "district": campaign.district,
@@ -470,6 +630,9 @@ def campaign_out(session: Session, campaign: Campaign) -> dict:
         "status": campaign.status,
         "created_at": campaign.created_at,
         "donor_names": names,
+        "emailed_count": status_counts.get("emailed", 0),
+        "email_failed_count": status_counts.get("email failed", 0),
+        "email_configured": email_configured(),
     }
 
 
@@ -482,29 +645,56 @@ def campaigns(_: User | None = Depends(require_admin), session: Session = Depend
 @app.post("/api/campaigns", response_model=CampaignOut, status_code=201)
 def create_campaign(payload: CampaignCreate, _: User | None = Depends(require_admin), session: Session = Depends(get_db)):
     inventory_item = session.scalar(select(Inventory).where(
-        Inventory.district == payload.district,
+        func.lower(Inventory.district) == payload.district.lower(),
         Inventory.blood_group == payload.blood_group,
     ))
     if not inventory_item:
         raise HTTPException(status_code=404, detail="No inventory found for that district and blood group")
 
     candidates = session.scalars(select(Donor).where(
-        Donor.district == payload.district,
+        func.lower(Donor.district) == payload.district.lower(),
         Donor.blood_group == payload.blood_group,
     )).all()
     ranked = rank_by_id(candidates)
     eligible = [donor for donor in candidates if ranked[donor.id]["eligible"]]
-    eligible.sort(key=lambda donor: ranked[donor.id]["priority_score"], reverse=True)
+    # Prioritize donors with linked user accounts so that real email addresses receive outreach
+    registered_donor_ids = set(session.scalars(
+        select(User.donor_id).where(User.donor_id.isnot(None), User.is_active.is_(True))
+    ).all())
+    eligible.sort(
+        key=lambda donor: (
+            1 if donor.id in registered_donor_ids else 0,
+            ranked[donor.id]["priority_score"]
+        ),
+        reverse=True
+    )
     start = (payload.stage - 1) * payload.batch_size
     selected = eligible[start:start + payload.batch_size]
     scores = calculate_group_scores(session, inventory_item, rankings=rankings_by_group(candidates, ranked))
+
+    accounts = session.scalars(select(User).where(
+        User.donor_id.in_([donor.id for donor in selected]),
+        User.is_active.is_(True),
+    )).all() if selected else []
+    linked_emails = {account.donor_id: account.email for account in accounts if account.donor_id is not None}
+    smtp_ready = email_configured()
+
+    if not selected:
+        initial_status = "no recipients"
+    elif not smtp_ready:
+        initial_status = "simulated"
+    elif linked_emails:
+        initial_status = "queued"
+    else:
+        initial_status = "no linked emails"
+
     campaign = Campaign(
         district=payload.district,
         blood_group=payload.blood_group,
         stage=payload.stage,
         recipients_count=len(selected),
         cbsri=scores["cbsri"],
-        status="simulated",
+        status=initial_status,
     )
     session.add(campaign)
     session.flush()
@@ -512,9 +702,50 @@ def create_campaign(payload: CampaignCreate, _: User | None = Depends(require_ad
     for donor in selected:
         donor.notifications_30d += 1
         donor.last_contact_at = now
-        session.add(Notification(campaign_id=campaign.id, donor_id=donor.id, status="simulated"))
+        if not smtp_ready:
+            notification_status = "simulated"
+        elif donor.id in linked_emails:
+            notification_status = "queued"
+        else:
+            notification_status = "no email account"
+        session.add(Notification(campaign_id=campaign.id, donor_id=donor.id, status=notification_status))
     session.commit()
     session.refresh(campaign)
+
+    if smtp_ready and linked_emails:
+        outbound = [
+            build_campaign_email(
+                to=linked_emails[donor.id],
+                donor_name=donor.name,
+                blood_group=campaign.blood_group,
+                district=campaign.district,
+                stage=campaign.stage,
+                cbsri=campaign.cbsri,
+            )
+            for donor in selected
+            if donor.id in linked_emails
+        ]
+        result = send_emails(outbound)
+        sent_recipients = set(result.sent_recipients)
+        failed_recipients = set(result.failed_recipients)
+        notifications = session.scalars(
+            select(Notification).where(Notification.campaign_id == campaign.id)
+        ).all()
+        for notification in notifications:
+            email = linked_emails.get(notification.donor_id)
+            if email in sent_recipients:
+                notification.status = "emailed"
+            elif email in failed_recipients:
+                notification.status = "email failed"
+        if result.sent == len(selected):
+            campaign.status = "email sent"
+        elif result.sent:
+            campaign.status = "partially emailed"
+        else:
+            campaign.status = "email failed"
+        session.commit()
+        session.refresh(campaign)
+
     return campaign_out(session, campaign)
 
 

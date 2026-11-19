@@ -1,20 +1,32 @@
-import { Droplet, LogOut, ShieldCheck } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Droplet, Gauge, LogOut, ShieldCheck } from 'lucide-react'
 import DonorPortal from './DonorPortal'
 import type { AuthUser, Donor } from '../lib/types'
+import { api } from '../lib/api'
 
 export default function UserPage({
   user,
-  donors,
+  donors = [],
   onRefresh,
   onSignOut,
   onHome,
+  onSwitchToAdmin,
 }: {
   user: AuthUser
-  donors: Donor[]
+  donors?: Donor[]
   onRefresh: () => void
   onSignOut: () => void
   onHome: () => void
+  onSwitchToAdmin?: () => void
 }) {
+  const [donorList, setDonorList] = useState<Donor[]>(donors)
+
+  useEffect(() => {
+    if (donorList.length === 0) {
+      api.donors().then(setDonorList).catch(() => {})
+    }
+  }, [donorList.length])
+
   return (
     <div className="user-shell">
       <header className="user-topbar">
@@ -24,7 +36,12 @@ export default function UserPage({
         </button>
         <div className="user-account">
           <span className="user-email" title={user.email}>{user.email}</span>
-          <span className="user-role">donor account</span>
+          <span className="user-role">{user.role} account</span>
+          {onSwitchToAdmin && (
+            <button className="button button-primary button-compact" title="Open Admin Console" onClick={onSwitchToAdmin}>
+              <Gauge size={14} /><span>Admin Console</span>
+            </button>
+          )}
           <button className="button button-outline button-compact" onClick={onSignOut}><LogOut size={14} /><span>Sign out</span></button>
         </div>
       </header>
@@ -34,19 +51,16 @@ export default function UserPage({
           <div>
             <div className="eyebrow"><span className="eyebrow-mark" />DONOR ACCESS · SIGNED-IN ACCOUNT</div>
             <h1>Welcome to your donor space</h1>
-            <p>Keep your availability current, raise a blood request for review, and track outreach and donation history. Outreach here is simulated — no SMS is sent without operator review.</p>
+            <p>Keep your availability current, raise a blood request for review, and track outreach and donation history. Email outreach is sent only after a district blood bank runs a reviewed activation round.</p>
           </div>
           <div className="user-hero-note"><ShieldCheck size={15} /><span>Eligibility (90-day interval, age 18–65) and consent are checked before any contact round.</span></div>
         </div>
 
-        {user.donor_id == null ? (
-          <div className="empty-state">
-            <strong>No donor profile linked</strong>
-            <span>Ask your blood-bank administrator to link this login to a donor record.</span>
-          </div>
-        ) : (
-          <DonorPortal donors={donors} fixedDonorId={user.donor_id} onRefresh={onRefresh} />
-        )}
+        <DonorPortal
+          donors={donorList}
+          fixedDonorId={user.donor_id ?? (donorList[0]?.id)}
+          onRefresh={onRefresh}
+        />
 
         <footer className="page-footer user-footer">
           <span>RaktSanket · Donor space · Pilot</span>
