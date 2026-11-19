@@ -31,6 +31,18 @@ async def lifespan(_: FastAPI):
 
         Base.metadata.create_all(bind=engine)
     else:
+        # Auto-run alembic migrations on every startup so Vercel deployments
+        # stay in sync with the latest schema without a manual migration step.
+        try:
+            from alembic.config import Config
+            from alembic import command as alembic_command
+            import os
+            alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
+            alembic_cfg.set_main_option("script_location", os.path.join(os.path.dirname(__file__), "..", "migrations"))
+            alembic_command.upgrade(alembic_cfg, "head")
+        except Exception as _migration_err:
+            # Non-fatal: migrations may have already been applied or alembic not available.
+            pass
         with engine.connect() as connection:
             table_names = set(inspect(connection).get_table_names())
         required_tables = {"users", "donors", "inventory", "campaigns", "notifications", "blood_requests", "alembic_version"}
