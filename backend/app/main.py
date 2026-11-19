@@ -53,12 +53,15 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(FRONTEND_ORIGINS),
+    allow_origins=["*"] if not IS_PRODUCTION else list(FRONTEND_ORIGINS),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(ALLOWED_HOSTS))
+if IS_PRODUCTION:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(ALLOWED_HOSTS))
+else:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
 
 
 @app.middleware("http")
