@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import {
-  ArrowRight, Bell, Check, ChevronDown, Droplet, Gauge, HeartPulse, MapPin, Menu, Plus, RefreshCw,
+  ArrowRight, Bell, Check, ChevronDown, CircleX, Droplet, Gauge, HeartPulse, KeyRound, MapPin, Menu, PackageCheck, Plus, RefreshCw,
   ShieldCheck, TriangleAlert, X,
 } from 'lucide-react'
 import { api } from '../lib/api'
-import type { Advisory, AuthUser, Campaign, Dashboard, Donor, Inventory } from '../lib/types'
+import type { AdminBloodRequest, Advisory, AuthUser, Campaign, Dashboard, Donor, DonorAccount, EmailStatus, Inventory } from '../lib/types'
 import DonorPortal from '../donor/DonorPortal'
 import { adminNavigation, bloodGroups, Modal, pageDescription } from './components/shared'
 import type { AdminView } from './components/shared'
@@ -15,11 +15,12 @@ import { DonorView } from './views/DonorView'
 import { AdminNotifications } from './views/NotificationsView'
 import { AdminAnalytics } from './views/AnalyticsView'
 import { OutreachView } from './views/OutreachView'
+import { RequestsView, StatusChip, type RequestFilter, type ReviewDecision } from './views/RequestsView'
 
 type Role = 'admin' | 'donor'
 const AUTH_REQUIRED = import.meta.env.VITE_AUTH_REQUIRED === 'true'
 
-export default function AdminApp({ user, onSignOut }: { user: AuthUser | null; onSignOut: () => void }) {
+export default function AdminApp({ user, onSignOut, onSwitchToDonor }: { user: AuthUser | null; onSignOut: () => void; onSwitchToDonor?: () => void }) {
   const [role, setRole] = useState<Role>('admin')
   const [view, setView] = useState<AdminView>('overview')
   const [district, setDistrict] = useState('')
@@ -42,9 +43,18 @@ export default function AdminApp({ user, onSignOut }: { user: AuthUser | null; o
   const [campaignResult, setCampaignResult] = useState<Campaign | null>(null)
   const [campaignBusy, setCampaignBusy] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [accounts, setAccounts] = useState<DonorAccount[]>([])
+  const [emailStatus, setEmailStatus] = useState<EmailStatus | null>(null)
+  const [requests, setRequests] = useState<AdminBloodRequest[]>([])
+  const [requestFilter, setRequestFilter] = useState<RequestFilter>('open')
+  const [reviewing, setReviewing] = useState<{ request: AdminBloodRequest; decision: ReviewDecision } | null>(null)
+  const [creatingLogin, setCreatingLogin] = useState<Donor | null>(null)
+  const [dialogError, setDialogError] = useState('')
+  const [dialogBusy, setDialogBusy] = useState(false)
+  const [notice, setNotice] = useState('')
 
   useEffect(() => {
-    if (!AUTH_REQUIRED && role === 'donor') {
+    if (role === 'donor') {
       setLoading(false)
       return
     }
@@ -54,11 +64,18 @@ export default function AdminApp({ user, onSignOut }: { user: AuthUser | null; o
       api.dashboard(district || undefined),
       api.donors(district || undefined),
       api.campaigns(),
-    ]).then(([nextDashboard, nextDonors, nextCampaigns]) => {
+      // donor logins and requests are secondary: a failure here must not hide the dashboard
+      api.donorAccounts().catch(() => [] as DonorAccount[]),
+      api.adminBloodRequests().catch(() => [] as AdminBloodRequest[]),
+      api.emailStatus().catch(() => null),
+    ]).then(([nextDashboard, nextDonors, nextCampaigns, nextAccounts, nextRequests, nextEmailStatus]) => {
       if (!active) return
       setDashboard(nextDashboard)
       setDonors(nextDonors)
       setCampaigns(nextCampaigns)
+      setAccounts(nextAccounts)
+      setRequests(nextRequests)
+      setEmailStatus(nextEmailStatus)
       if (!district && nextDashboard.selected_district) setDistrict(nextDashboard.selected_district)
       setError('')
     }).catch((reason: unknown) => {
@@ -125,6 +142,10 @@ export default function AdminApp({ user, onSignOut }: { user: AuthUser | null; o
     try {
       const result = await api.createCampaign({ district, blood_group: campaignGroup, stage: campaignStage, batch_size: batchSize })
       setCampaignResult(result)
+      const delivery = result.email_configured
+        ? `${result.emailed_count} email${result.emailed_count === 1 ? '' : 's'} sent${result.email_failed_count ? `, ${result.email_failed_count} failed` : ''}.`
+        : 'Email is not configured, so this round is stored as simulated.'
+      setNotice(`Tier ${result.stage} outreach prepared for ${result.recipients_count} donor${result.recipients_count === 1 ? '' : 's'}. ${delivery}`)
       await reload()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not create the campaign.')
@@ -133,13 +154,61 @@ export default function AdminApp({ user, onSignOut }: { user: AuthUser | null; o
     }
   }
 
+  function openDialog(open: () => void) {
+    setDialogError('')
+    setDialogBusy(false)
+    open()
+  }
+
+  async function createLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!creatingLogin) return
+    const form = new FormData(event.currentTarget)
+    const password = String(form.get('password'))
+    if (password !== String(form.get('confirm'))) {
+      setDialogError('The two passwords do not match.')
+      return
+    }
+    setDialogBusy(true)
+    setDialogError('')
+    try {
+      const account = await api.createDonorAccount({ donor_id: creatingLogin.id, email: String(form.get('email')).trim(), password })
+      setNotice(`Login created for ${creatingLogin.name.replace(' (demo)', '')}. Share the email and password with the donor directly.`)
+      setCreatingLogin(null)
+      setAccounts((current) => [...current, { id: account.id, email: account.email, donor_id: account.donor_id, is_active: true, created_at: new Date().toISOString() }])
+    } catch (reason) {
+      setDialogError(reason instanceof Error ? reason.message : 'Could not create the login.')
+    } finally {
+      setDialogBusy(false)
+    }
+  }
+
+  async function submitReview(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!reviewing) return
+    const note = String(new FormData(event.currentTarget).get('note') ?? '').trim()
+    setDialogBusy(true)
+    setDialogError('')
+    try {
+      const updated = await api.reviewBloodRequest(reviewing.request.id, { status: reviewing.decision, ...(note ? { note } : {}) })
+      setRequests((current) => current.map((item) => (item.id === updated.id ? updated : item)))
+      setNotice(`Request from ${updated.donor_name.replace(' (demo)', '')} marked ${updated.status}. The donor sees this on their page.`)
+      setReviewing(null)
+    } catch (reason) {
+      setDialogError(reason instanceof Error ? reason.message : 'Could not save the review.')
+    } finally {
+      setDialogBusy(false)
+    }
+  }
+
+  const pendingRequests = requests.filter((request) => request.status === 'pending review').length
+
   function openView(nextView: AdminView) {
     setView(nextView)
     setSidebarOpen(false)
   }
 
   function switchRole(nextRole: Role) {
-    if (AUTH_REQUIRED) return
     setRole(nextRole)
     setView('overview')
     setSidebarOpen(false)
@@ -155,15 +224,16 @@ export default function AdminApp({ user, onSignOut }: { user: AuthUser | null; o
           <button className="sidebar-close icon-button" aria-label="Close menu" onClick={(event) => { event.preventDefault(); setSidebarOpen(false) }}><X size={17} /></button>
         </a>
         <div className="sidebar-label">WORKSPACE</div>
-        {!AUTH_REQUIRED ? <div className="role-switch" aria-label="Choose demo role">
+        <div className="role-switch" aria-label="Choose workspace">
           <button className={role === 'admin' ? 'role-active' : ''} onClick={() => switchRole('admin')}><Gauge size={14} />Admin</button>
-          <button className={role === 'donor' ? 'role-active' : ''} onClick={() => { setRole('donor'); setSidebarOpen(false) }}><HeartPulse size={14} />Donor</button>
-        </div> : <div className="auth-account-label"><ShieldCheck size={14} />Admin console · signed in</div>}
+          <button className={role === 'donor' ? 'role-active' : ''} onClick={() => onSwitchToDonor ? onSwitchToDonor() : switchRole('donor')}><HeartPulse size={14} />Donor view</button>
+        </div>
         <nav className="primary-nav" aria-label="Main navigation">
           {navigation.map(({ id, label, icon: Icon }) => (
             <button key={id} className={`nav-item ${view === id ? 'nav-active' : ''}`} onClick={() => openView(id)}>
               <Icon size={18} strokeWidth={1.8} /><span>{label}</span>
               {id === 'inventory' && dashboard?.totals.at_risk_groups ? <b className="nav-count">{dashboard.totals.at_risk_groups}</b> : null}
+              {id === 'requests' && pendingRequests ? <b className="nav-count" aria-label={`${pendingRequests} pending`}>{pendingRequests}</b> : null}
             </button>
           ))}
         </nav>
@@ -195,16 +265,18 @@ export default function AdminApp({ user, onSignOut }: { user: AuthUser | null; o
             <div className="heading-actions"><span className="updated-at"><span className="live-pulse" />Synced just now</span><button className="button button-outline button-compact" onClick={reload} title="Refresh dashboard"><RefreshCw size={15} /><span>Refresh</span></button></div>
           </div>
 
+          {notice && <div className="success-banner"><Check size={15} />{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
           {error && <div className="error-banner"><TriangleAlert size={17} /><span><strong>Connection issue.</strong> {error}{import.meta.env.DEV ? ' Start the API at localhost:8000 to load live demo records.' : ''}</span><button className="icon-button" onClick={() => setError('')} aria-label="Dismiss"><X size={16} /></button></div>}
-          {!AUTH_REQUIRED && role === 'donor' ? <DonorPortal donors={donors} fixedDonorId={undefined} onRefresh={reload} /> : loading && !dashboard ? <div className="loading-state"><span className="spinner" /><span>Connecting to district records…</span></div> : dashboard ? <>
+          {role === 'donor' ? <DonorPortal donors={donors} fixedDonorId={user?.donor_id} onRefresh={reload} /> : loading && !dashboard ? <div className="loading-state"><span className="spinner" /><span>Connecting to district records…</span></div> : dashboard ? <>
             {!AUTH_REQUIRED && <div className="demo-strip"><span className="demo-dot" /><strong>DEMO DATA</strong><span>Generated sample records for interface testing. Replace with approved district data before operational use.</span><button onClick={() => openView('outreach')}>Open outreach <ArrowRight size={14} /></button></div>}
             {dashboard && view === 'overview' && <Overview dashboard={dashboard} advisory={advisory} language={language} setLanguage={setLanguage} forecastGroup={forecastGroup} setForecastGroup={setForecastGroup} selectedForecast={selectedForecast} onGoOutreach={() => openView('outreach')} onSelectStock={(group) => { setForecastGroup(group); openView('inventory') }} onSelectDonor={() => openView('ranking')} />}
             {dashboard && view === 'inventory' && <InventoryView inventory={dashboard.inventory} forecasts={dashboard.forecasts} selectedGroup={forecastGroup} setSelectedGroup={setForecastGroup} onEdit={setEditingInventory} />}
             {dashboard && view === 'forecast' && <ForecastView forecasts={dashboard.forecasts} />}
-            {dashboard && (view === 'donors' || view === 'ranking') && <DonorView donors={visibleDonors} search={donorSearch} setSearch={setDonorSearch} bloodGroup={donorGroup} setBloodGroup={setDonorGroup} onAdd={() => setAddingDonor(true)} ranking={view === 'ranking'} />}
-            {dashboard && view === 'notifications' && <AdminNotifications campaigns={campaigns} />}
+            {dashboard && (view === 'donors' || view === 'ranking') && <DonorView donors={visibleDonors} search={donorSearch} setSearch={setDonorSearch} bloodGroup={donorGroup} setBloodGroup={setDonorGroup} onAdd={() => setAddingDonor(true)} ranking={view === 'ranking'} accounts={accounts} onCreateLogin={(donor) => openDialog(() => setCreatingLogin(donor))} />}
+            {dashboard && view === 'requests' && <RequestsView requests={requests} district={district} filter={requestFilter} setFilter={setRequestFilter} onReview={(request, decision) => openDialog(() => setReviewing({ request, decision }))} />}
+            {dashboard && view === 'notifications' && <AdminNotifications campaigns={campaigns} emailConfigured={emailStatus?.configured ?? false} />}
             {dashboard && view === 'analytics' && <AdminAnalytics dashboard={dashboard} campaigns={campaigns} />}
-            {dashboard && view === 'outreach' && <OutreachView campaigns={campaigns} district={district} bloodGroup={campaignGroup} setBloodGroup={setCampaignGroup} stage={campaignStage} setStage={setCampaignStage} batchSize={batchSize} setBatchSize={setBatchSize} result={campaignResult} busy={campaignBusy} onSubmit={launchCampaign} />}
+            {dashboard && view === 'outreach' && <OutreachView campaigns={campaigns} district={district} bloodGroup={campaignGroup} setBloodGroup={setCampaignGroup} stage={campaignStage} setStage={setCampaignStage} batchSize={batchSize} setBatchSize={setBatchSize} result={campaignResult} busy={campaignBusy} emailConfigured={emailStatus?.configured ?? false} onSubmit={launchCampaign} />}
           </> : <div className="empty-state"><HeartPulse size={24} /><strong>Dashboard unavailable</strong><span>Check that the RaktSanket API is running and try again.</span><button className="button button-primary" onClick={reload}><RefreshCw size={15} />Retry connection</button></div>}
           <footer className="page-footer"><span>RaktSanket <b>·</b> Pilot operations console</span><span><ShieldCheck size={14} />Human review required before donor contact</span></footer>
         </div>
@@ -212,6 +284,20 @@ export default function AdminApp({ user, onSignOut }: { user: AuthUser | null; o
 
       {editingInventory && <Modal title={`Update ${editingInventory.blood_group} stock`} onClose={() => setEditingInventory(null)}><form className="form-stack" onSubmit={saveInventory}><label>Units available<input name="units_available" type="number" min="0" defaultValue={editingInventory.units_available} required /></label><label>Average daily demand<input name="avg_daily_demand" type="number" min="0.1" step="0.1" defaultValue={editingInventory.avg_daily_demand} required /></label><label>Safety stock threshold<input name="safety_stock_units" type="number" min="0" defaultValue={editingInventory.safety_stock_units} required /></label><div className="modal-actions"><button type="button" className="button button-outline" onClick={() => setEditingInventory(null)}>Cancel</button><button className="button button-primary"><Check size={15} />Save stock</button></div></form></Modal>}
       {addingDonor && <Modal title="Add donor record" onClose={() => setAddingDonor(false)}><form className="form-stack" onSubmit={saveDonor}><label>Full name<input name="name" minLength={2} placeholder="Donor name" required /></label><label>District<input name="district" list="donor-district-options" defaultValue={district} minLength={2} maxLength={80} placeholder="Enter district" required /><datalist id="donor-district-options">{(dashboard?.districts ?? []).map((name) => <option key={name} value={name} />)}</datalist></label><div className="form-row"><label>Blood group<select name="blood_group" defaultValue="O+">{bloodGroups.map((group) => <option key={group}>{group}</option>)}</select></label><label>Age<input name="age" type="number" min="18" max="65" defaultValue="28" required /></label></div><label>Last donation date<input name="last_donation_date" type="date" /></label><div className="form-row"><label>Previous donations<input name="donations_count" type="number" min="0" defaultValue="1" required /></label><label>Past response rate<input name="response_rate" type="number" min="0" max="1" step="0.05" defaultValue="0.6" required /></label></div><div className="modal-actions"><button type="button" className="button button-outline" onClick={() => setAddingDonor(false)}>Cancel</button><button className="button button-primary"><Plus size={15} />Add donor</button></div></form></Modal>}
+      {creatingLogin && <Modal title="Create donor login" onClose={() => setCreatingLogin(null)}><form className="form-stack" onSubmit={createLogin}>
+        <p className="modal-intro">Lets <strong>{creatingLogin.name.replace(' (demo)', '')}</strong> ({creatingLogin.blood_group}, {creatingLogin.district}) sign in to the donor space. They will only ever see their own record.</p>
+        {dialogError && <div className="error-banner"><span>{dialogError}</span></div>}
+        <label>Donor's email<input name="email" type="email" maxLength={254} autoComplete="off" required /></label>
+        <div className="form-row"><label>Password<input name="password" type="password" minLength={12} maxLength={128} autoComplete="new-password" required /></label><label>Confirm password<input name="confirm" type="password" minLength={12} maxLength={128} autoComplete="new-password" required /></label></div>
+        <p className="modal-hint">At least 12 characters. There is no self-service password reset yet, so share it with the donor directly and securely.</p>
+        <div className="modal-actions"><button type="button" className="button button-outline" onClick={() => setCreatingLogin(null)}>Cancel</button><button className="button button-primary" disabled={dialogBusy}><KeyRound size={15} />{dialogBusy ? 'Creating…' : 'Create login'}</button></div>
+      </form></Modal>}
+      {reviewing && <Modal title={{ approved: 'Approve request', fulfilled: 'Mark request fulfilled', rejected: 'Reject request' }[reviewing.decision]} onClose={() => setReviewing(null)}><form className="form-stack" onSubmit={submitReview}>
+        <div className="review-summary"><span className="blood-type">{reviewing.request.blood_group}</span><span><strong>{reviewing.request.units_requested} unit{reviewing.request.units_requested > 1 ? 's' : ''} · {reviewing.request.hospital_name}</strong><small>{reviewing.request.donor_name.replace(' (demo)', '')} · needed by {new Date(`${reviewing.request.needed_by}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</small></span><StatusChip status={reviewing.request.status} /></div>
+        {dialogError && <div className="error-banner"><span>{dialogError}</span></div>}
+        <label>{reviewing.decision === 'rejected' ? 'Reason for the donor' : 'Note for the donor (optional)'}<textarea name="note" rows={3} maxLength={1000} required={reviewing.decision === 'rejected'} defaultValue={reviewing.request.admin_note ?? ''} placeholder={reviewing.decision === 'rejected' ? 'For example: please request through the hospital transfusion desk' : 'For example: 2 units reserved, collect from the district blood bank'} /></label>
+        <div className="modal-actions"><button type="button" className="button button-outline" onClick={() => setReviewing(null)}>Cancel</button><button className={`button ${reviewing.decision === 'rejected' ? 'button-danger' : 'button-primary'}`} disabled={dialogBusy}>{reviewing.decision === 'rejected' ? <CircleX size={15} /> : reviewing.decision === 'fulfilled' ? <PackageCheck size={15} /> : <Check size={15} />}{dialogBusy ? 'Saving…' : { approved: 'Approve', fulfilled: 'Mark fulfilled', rejected: 'Reject request' }[reviewing.decision]}</button></div>
+      </form></Modal>}
     </div>
   )
 }

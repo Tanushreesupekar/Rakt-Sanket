@@ -96,6 +96,46 @@ class LoginThrottle:
 login_throttle = LoginThrottle()
 
 
+class RegistrationThrottle:
+    """Caps self-service account creation per client address.
+
+    This is intentionally separate from the failed-login limiter: a busy
+    shared network should still be able to complete normal sign-ins even
+    after hitting the registration cap."""
+
+    def __init__(self, max_per_client: int = 5, window_seconds: int = 3600) -> None:
+        self.max_per_client = max_per_client
+        self.window = window_seconds
+        self._attempts: dict[str, deque[float]] = defaultdict(deque)
+        self._lock = Lock()
+
+    def _recent(self, client: str, now: float) -> deque[float]:
+        entries = self._attempts[client]
+        while entries and now - entries[0] > self.window:
+            entries.popleft()
+        return entries
+
+    def retry_after(self, client: str) -> int:
+        now = monotonic()
+        with self._lock:
+            entries = self._recent(client, now)
+            if len(entries) >= self.max_per_client:
+                return int(self.window - (now - entries[0])) + 1
+        return 0
+
+    def record(self, client: str) -> None:
+        now = monotonic()
+        with self._lock:
+            self._recent(client, now).append(now)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._attempts.clear()
+
+
+registration_throttle = RegistrationThrottle()
+
+
 def create_access_token(user: User) -> str:
     now = datetime.now(timezone.utc)
     payload = {
@@ -147,5 +187,9 @@ def require_admin(user: User | None = Depends(get_current_user)) -> User | None:
 def authorize_donor_access(donor_id: int, user: User | None) -> None:
     if user is None and not IS_PRODUCTION:
         return
-    if user is None or user.role != "donor" or user.donor_id != donor_id:
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    if user.role == "admin":
+        return
+    if user.role != "donor" or user.donor_id != donor_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access to this donor record is not allowed")

@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -18,10 +19,27 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=12, max_length=128)
 
 
+class DonorRegister(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    email: EmailStr = Field(max_length=254)
+    password: str = Field(min_length=12, max_length=128)
+    district: str = Field(min_length=2, max_length=80)
+    blood_group: str = Field(pattern=r"^(A|B|AB|O)[+-]$")
+    age: int = Field(ge=18, le=65)
+    last_donation_date: date | None = None
+    donations_count: int = Field(default=0, ge=0, le=200)
+    consent: bool
+
+
 class DonorAccountCreate(BaseModel):
     donor_id: int = Field(gt=0)
     email: EmailStr = Field(max_length=254)
     password: str = Field(min_length=12, max_length=128)
+
+
+class EmailStatusOut(BaseModel):
+    configured: bool
+    from_address: str | None = None
 
 
 class AuthUserOut(BaseModel):
@@ -66,6 +84,28 @@ class BloodRequestOut(BaseModel):
     needed_by: date
     notes: str | None
     status: str
+    created_at: datetime
+    admin_note: str | None = None
+    reviewed_at: datetime | None = None
+
+
+class AdminBloodRequestOut(BloodRequestOut):
+    donor_name: str
+
+
+class BloodRequestReview(BaseModel):
+    # "pending review" -> approved | rejected; approved -> fulfilled | rejected
+    status: Literal["approved", "fulfilled", "rejected"]
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class DonorAccountOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    donor_id: int | None
+    is_active: bool
     created_at: datetime
 
 
@@ -131,6 +171,9 @@ class CampaignOut(BaseModel):
     status: str
     created_at: datetime
     donor_names: list[str] = []
+    emailed_count: int = 0
+    email_failed_count: int = 0
+    email_configured: bool = False
 
 
 class ForecastPoint(BaseModel):

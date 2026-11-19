@@ -7,12 +7,13 @@ A pilot dashboard for district-level blood availability, donor response prioriti
 - React, TypeScript, and Vite dashboard with separate admin and donor workspaces. Admin views cover inventory, demand forecasts, donor management, CBSRI ranking, notifications, and analytics; donor views cover profile, blood requests, notifications, and donation history.
 - FastAPI service for district inventory, 7–14 day projections, donor eligibility and fatigue-adjusted priority, advisory translations, and campaign simulation.
 - SQLAlchemy persistence with SQLite for local demos and PostgreSQL for staging/production; Alembic owns deployed schema changes.
-- Argon2 password hashing, short-lived signed bearer tokens, admin/donor role enforcement, donor-record ownership checks, failed-login throttling, and interactive first-admin provisioning.
+- Argon2 password hashing, short-lived signed bearer tokens, admin/donor role enforcement, donor-record ownership checks, failed-login throttling, donor self-registration with consent, and interactive first-admin provisioning.
+- Optional SMTP delivery for donor outreach using the Python standard library, with per-donor delivery status and a simulated fallback when SMTP is not configured.
 - Synthetic demo records for Amravati, Akola, Wardha, and Yavatmal. Demo names are marked and do not represent real donors.
 - A reproducible synthetic donor-response dataset and trained XGBoost model with TreeSHAP feature attributions.
 - API, scoring, dataset-generation, and model-inference tests.
 
-The Admin/Donor selector is available only in development demo mode. Production builds enable the sign-in flow and server-side role enforcement. Donor accounts are provisioned against donor records by an administrator. Identity verification, account recovery, consent evidence, SMS/email delivery, and clinical eligibility integrations still require deployment-specific implementation.
+The Admin/Donor selector is available only in development demo mode. Production builds enable the sign-in flow and server-side role enforcement. Donors can create their own account from the donor sign-in screen, or an administrator can provision a login against an existing donor record. Outreach email is optional: when SMTP is configured, an activation round emails selected donors who have a linked login and records delivery status; without SMTP the same round is stored as simulated. Identity verification, account recovery, consent evidence, and SMS delivery still require deployment-specific implementation.
 
 ## Run locally on Windows
 
@@ -54,7 +55,20 @@ DATABASE_URL=postgresql+psycopg://user:password@managed-postgres-host:5432/rakts
 SECRET_KEY=<generate-and-store-a-random-secret-of-at-least-32-characters>
 FRONTEND_ORIGINS=https://your-frontend-domain.example
 ALLOWED_HOSTS=your-api-domain.example
+# Optional: leave SMTP_HOST empty to keep outreach simulated.
+SMTP_ENABLED=true
+SMTP_HOST=smtp.example.org
+SMTP_PORT=587
+SMTP_USERNAME=mailer@example.org
+SMTP_PASSWORD=<smtp-app-password>
+SMTP_FROM=mailer@example.org
+SMTP_FROM_NAME=RaktSanket
+SMTP_USE_TLS=true
+SMTP_USE_SSL=false
+SMTP_TIMEOUT_SECONDS=15
 ```
+
+`SMTP_HOST`, `SMTP_FROM` and `SMTP_USERNAME` are optional. When they are unset, `POST /api/campaigns` still creates the contact list and notifications, but marks the campaign as simulated. When configured, each run connects once, emails every selected donor with an active linked login, and reports `emailed_count` / `email_failed_count`. Leave `SMTP_USE_SSL=false` with STARTTLS on port 587; set `SMTP_USE_SSL=true` and use port 465 for implicit TLS. Use a provider app password rather than a normal mailbox password.
 
 The frontend reads the root `.env`; `VITE_API_URL=/api` uses the Vite development proxy. `npm run build` also reads the committed [/.env.production](.env.production), which points at `/api` on the same origin and turns sign-in on. To call an API on another origin instead, set `VITE_API_URL` in the build environment; it overrides the file.
 
@@ -65,7 +79,7 @@ The frontend reads the root `.env`; `VITE_API_URL=/api` uses the Vite developmen
 1. Provision a managed PostgreSQL database and deploy the API behind HTTPS. Store the actual `DATABASE_URL`, randomly generated `SECRET_KEY`, API host, and frontend origin in the hosting provider's secret/environment settings. Never commit populated `.env` files or real database credentials.
 2. Set `APP_ENV=production`, `DEMO_SEED=false`, `FRONTEND_ORIGINS` to the exact HTTPS frontend origin, and `ALLOWED_HOSTS` to the API hostname. Startup refuses SQLite, missing signing keys, demo seeding, and wildcard/missing production hosts/origins.
 3. Install backend dependencies, then run `python -m alembic upgrade head` as a release migration step before starting the service. Startup checks PostgreSQL connectivity and required migrated tables; it does not create or seed production tables.
-4. Create the first administrator interactively with `python -m app.create_admin`; no default administrator credentials are shipped. Administrators can create donor login accounts through `POST /api/admin/donor-accounts`, linking each account to an existing donor record.
+4. Create the first administrator interactively with `python -m app.create_admin`; no default administrator credentials are shipped. Donors can self-register from the donor sign-in screen, or administrators can create donor login accounts through `POST /api/admin/donor-accounts`, linking each account to an existing donor record.
 5. Set frontend `VITE_API_URL` and `VITE_AUTH_REQUIRED=true` at build time, deploy the static `dist/` output, and configure the API CORS allowlist to that exact origin. Route `/api` to FastAPI if using a same-origin deployment, or use the absolute API URL in the frontend setting.
 
 To load the PDF-derived synthetic records into a database after migration, run `python -m app.import_example_data --district <district> --confirm-synthetic-data` from `backend`. This is an explicit, idempotent import; it preserves existing records and adds marked synthetic profiles, stock history, notification outcomes, and inventory summaries. Do not run it with real data unless you intentionally want synthetic records in that database.
@@ -85,6 +99,7 @@ Set these in the Vercel project's environment variables:
 | `DATABASE_URL` | the production PostgreSQL URL | a **separate** database (for example a Neon branch), so a preview push never touches real donor records |
 | `SECRET_KEY` | a random 32+ character value | a different random value |
 | `ALLOWED_HOSTS`, `FRONTEND_ORIGINS` | only for a custom domain | not needed |
+| `SMTP_*` | optional; same sender settings | optional; use a test mailbox |
 
 On Vercel the API trusts the hostnames the platform reports for the deployment (`VERCEL_URL`, `VERCEL_BRANCH_URL`, `VERCEL_PROJECT_PRODUCTION_URL`, see `backend/app/settings.py`), so every preview URL works without a wildcard; this needs the project's "Automatically expose System Environment Variables" setting, which is on by default. Add a custom domain to both `ALLOWED_HOSTS` (hostname) and `FRONTEND_ORIGINS` (`https://` origin). Vercel does not run migrations: run `python -m alembic upgrade head` against each database (production and preview) before the first deploy and after any schema change. Each function instance keeps its own sign-in failure counters, so on Vercel the login throttle is per instance; add a [WAF rate limit](https://vercel.com/docs/vercel-firewall/vercel-waf/rate-limiting) on `/api/auth/login` for a shared one.
 
@@ -102,7 +117,7 @@ docker run -p 8000:8000 --env-file <secrets-file> raktsanket-api
 
 ### Sign-in protection
 
-`POST /api/auth/login` returns `429` with `Retry-After` after 5 failed attempts for one account, or 30 from one client address, within 15 minutes. A successful sign-in clears that account's failures. The counters live in each API process; with several workers or replicas, also rate-limit `/api/auth/login` at the proxy or gateway.
+`POST /api/auth/login` returns `429` with `Retry-After` after 5 failed attempts for one account, or 30 from one client address, within 15 minutes. A successful sign-in clears that account's failures. `POST /api/auth/register` allows 5 new accounts per client address per hour. These counters live in each API process; with several workers or replicas, also rate-limit `/api/auth/login` and `/api/auth/register` at the proxy or gateway.
 
 ## API surface
 
@@ -111,11 +126,14 @@ docker run -p 8000:8000 --env-file <secrets-file> raktsanket-api
 - `GET /api/forecasts?district=Amravati&blood_group=O-&days=14` — forecast for 7–14 days.
 - `GET /api/inventory?district=Amravati` and `PATCH /api/inventory/{id}` — read and update stock inputs.
 - `GET /api/donors?district=Amravati&eligible_only=true` and `POST /api/donors` — donor records and ranking.
-- `GET /api/campaigns` and `POST /api/campaigns` — staged contact-list simulation; no message is sent.
+- `GET /api/campaigns` and `POST /api/campaigns` - staged contact list; sends email to selected donors with a linked login when SMTP is configured, otherwise records the round as simulated.
 - `GET /api/advisories?district=Amravati&language=mr` — English (`en`), Hindi (`hi`), or Marathi (`mr`) advisory.
 - `GET/PATCH /api/donors/{id}/profile`, `GET /api/donors/{id}/notifications`, and `GET /api/donors/{id}/history` — donor portal records.
 - `GET /api/blood-requests?donor_id={id}` and `POST /api/blood-requests` — blood request submission and history, pending operator review.
-- `POST /api/auth/login`, `GET /api/auth/me`, and `POST /api/admin/donor-accounts` — production sign-in, session identity, and donor-account provisioning.
+- `POST /api/auth/login`, `POST /api/auth/register`, `GET /api/auth/me` - production sign-in, donor self-registration (creates the donor record and login together), and session identity.
+- `GET/POST /api/admin/donor-accounts` - list donor logins, and create one linked to a donor record (the **Create login** action in Donor Management).
+- `GET /api/admin/email-status` - whether SMTP is configured and which sender address is active.
+- `GET /api/admin/blood-requests?district=&status=` and `PATCH /api/admin/blood-requests/{id}` — every donor's blood requests, and the review decision. `pending review` can become `approved` or `rejected`; `approved` can become `fulfilled` or `rejected`; fulfilled and rejected are final. The optional note is shown to the donor. Needs the `20bb1d036b70` migration.
 
 ## Validation
 
