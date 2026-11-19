@@ -1,8 +1,12 @@
-import { Activity, Bell, Droplet, Gauge, HeartPulse, MapPin, Send, ShieldCheck } from 'lucide-react'
+import { useState } from 'react'
+import { Activity, Bell, Droplet, Gauge, Globe, HeartPulse, MapPin, Send, ShieldCheck } from 'lucide-react'
+import ServerConfigModal from '../components/ServerConfigModal'
 
 export default function Landing({ onAdmin, onDonor }: { onAdmin: () => void; onDonor: () => void }) {
+  const [showServerModal, setShowServerModal] = useState(false)
   return (
     <div className="landing">
+      {showServerModal && <ServerConfigModal onClose={() => setShowServerModal(false)} />}
       <header className="landing-topbar">
         <span className="brand">
           <span className="brand-mark"><Droplet size={21} fill="currentColor" /></span>
@@ -14,6 +18,16 @@ export default function Landing({ onAdmin, onDonor }: { onAdmin: () => void; onD
           <a href="#scope">Pilot scope</a>
         </nav>
         <div className="landing-cta">
+          <button
+            type="button"
+            className="button button-outline"
+            style={{ fontSize: '0.8rem', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 4 }}
+            onClick={() => setShowServerModal(true)}
+            title="Configure Backend Server IP"
+          >
+            <Globe size={13} />
+            <span>Server</span>
+          </button>
           <button className="button button-outline" onClick={onDonor}>Donor sign in</button>
           <button className="button button-primary" onClick={onAdmin}>Admin sign in</button>
         </div>

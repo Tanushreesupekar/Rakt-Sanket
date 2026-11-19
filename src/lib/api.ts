@@ -1,12 +1,22 @@
+import { Capacitor } from '@capacitor/core'
 import type { AdminBloodRequest, Advisory, AuthUser, BloodRequest, BloodRequestStatus, DonorAccount, Campaign, Dashboard, Donor, DonorHistory, DonorNotification, EmailStatus, Forecast, Inventory, LoginResult, RegisterDonorInput } from './types'
 
 const TOKEN_KEY = 'raktsanket.access-token'
 const USER_KEY = 'raktsanket.user'
 
+export const PRESET_SERVERS = [
+  { label: 'Wi-Fi (192.168.1.8)', url: 'http://192.168.1.8:8000/api' },
+  { label: 'Ethernet (192.168.1.25)', url: 'http://192.168.1.25:8000/api' },
+  { label: 'Android Emulator (10.0.2.2)', url: 'http://10.0.2.2:8000/api' },
+  { label: 'Localhost (Web dev)', url: '/api' },
+]
+
 export function isNativePlatform(): boolean {
-  if (typeof window === 'undefined') return false
-  const w = window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }
-  return Boolean(w.Capacitor?.isNativePlatform?.())
+  try {
+    return Capacitor.isNativePlatform()
+  } catch {
+    return false
+  }
 }
 
 export function getApiBaseUrl(): string {
@@ -14,7 +24,7 @@ export function getApiBaseUrl(): string {
     const custom = localStorage.getItem('raktsanket_api_url')
     if (custom) return custom.replace(/\/+$/, '')
     if (isNativePlatform()) {
-      return 'http://10.0.2.2:8000/api'
+      return 'http://192.168.1.8:8000/api'
     }
   }
   return import.meta.env.VITE_API_URL ?? '/api'
@@ -60,14 +70,20 @@ export function hasSessionToken() {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY)
   const baseUrl = getApiBaseUrl()
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...init?.headers,
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init?.headers,
+      },
+    })
+  } catch (fetchErr) {
+    const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr)
+    throw new Error(`Cannot reach server at "${baseUrl}". Check that the backend is running and your phone is on the same Wi-Fi. (${msg})`)
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { detail?: unknown } | null
     // a 401 on the sign-in request itself is a wrong password, not an expired session
